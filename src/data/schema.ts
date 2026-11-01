@@ -114,3 +114,33 @@ export const HeroClass = z.object({
 export type HeroClass = z.infer<typeof HeroClass>
 
 export const HeroClassList = z.array(HeroClass)
+
+/* ============================================================
+   Random tables (the heart of 4AD)
+   ============================================================ */
+
+/** One row of a random table: a roll range and its result text. */
+export const TableEntry = z.object({
+  /** Roll range as written in the book: "2", "0-1", "6+", "1-2", "4-6". */
+  roll: z.string(),
+  result: z.string(),
+})
+export type TableEntry = z.infer<typeof TableEntry>
+
+/** Which environment a table belongs to (for foe/treasure tables). */
+export const Environment = z.enum(['dungeon', 'caverns', 'fungal', 'fiendish', 'all', 'scenario'])
+export type Environment = z.infer<typeof Environment>
+
+export const RandTable = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** Dice used to roll the table, e.g. "d6", "2d6". */
+  dice: z.string(),
+  environment: Environment.optional(),
+  entries: z.array(TableEntry).min(1),
+  /** Footnotes / rules text printed with the table. */
+  note: z.string().optional(),
+})
+export type RandTable = z.infer<typeof RandTable>
+
+export const RandTableList = z.array(RandTable)
