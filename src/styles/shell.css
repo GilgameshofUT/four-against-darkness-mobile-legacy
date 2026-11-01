@@ -1,0 +1,178 @@
+/* ============================================================
+   App shell — screen frame, headers, bottom tab bar
+   ============================================================ */
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: var(--app-max);
+  margin: 0 auto;
+  background: var(--ink-900);
+  position: relative;
+}
+
+.app__viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Screen ---------- */
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.screen__header {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: calc(env(safe-area-inset-top, 0px) + var(--sp-4)) var(--sp-4) var(--sp-3);
+  background: var(--ink-800);
+}
+
+/* Torch-glow chiaroscuro behind the header */
+.screen__header::before {
+  content: '';
+  position: absolute;
+  inset: -20px 0 -8px;
+  background: radial-gradient(65% 100% at 30% 0%, rgba(232, 180, 92, 0.14), transparent 70%);
+  pointer-events: none;
+}
+
+.screen__heading {
+  position: relative;
+  min-width: 0;
+}
+
+.screen__title {
+  font-size: var(--text-xl);
+  line-height: 1.1;
+  color: var(--parch-50);
+  text-shadow: 0 2px 12px rgba(232, 180, 92, 0.18);
+}
+
+.screen__subtitle {
+  margin-top: 3px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.screen__actions {
+  position: relative;
+  display: flex;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.screen__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--sp-4) var(--sp-4) var(--sp-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* ---------- Bottom tab bar ---------- */
+.tabbar {
+  display: flex;
+  background: linear-gradient(var(--ink-950), var(--ink-800));
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.5);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  z-index: 20;
+}
+
+.tabbar__tab {
+  flex: 1;
+  min-height: var(--tabbar-h);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: var(--text-2xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  transition: color 0.15s var(--ease-out);
+}
+
+.tabbar__tab span {
+  transform: translateY(0.5px);
+}
+
+.tabbar__tab.is-active {
+  color: var(--amber-200);
+}
+
+.tabbar__tab.is-active svg {
+  filter: drop-shadow(0 0 7px rgba(232, 180, 92, 0.55));
+}
+
+.tabbar__tab:active {
+  color: var(--amber-300);
+}
+
+/* ---------- Placeholder scaffold blocks (Phase 1) ---------- */
+.scaffold-note {
+  padding: var(--sp-4);
+  border: 1px dashed var(--stone-300);
+  border-radius: var(--r-md);
+  background: rgba(45, 38, 29, 0.4);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.scaffold-note b {
+  color: var(--parch-300);
+  font-weight: 600;
+}
+
+.scaffold-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--sp-3);
+}
+
+.scaffold-tile {
+  padding: var(--sp-4);
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: linear-gradient(160deg, var(--stone-500), var(--ink-700));
+  box-shadow: var(--shadow-inset);
+  min-height: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  justify-content: space-between;
+}
+
+.scaffold-tile__label {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sepia-400);
+}
+
+.scaffold-tile__value {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  color: var(--parch-100);
+}
+
+.scaffold-tile__value small {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}

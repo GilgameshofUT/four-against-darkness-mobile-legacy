@@ -1,0 +1,202 @@
+/* ============================================================
+   Global base — reset, surfaces, texture, shared primitives
+   ============================================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--ink-900);
+  color: var(--parch-200);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Fine paper-grain overlay across the whole app */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+#root {
+  height: 100%;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+a {
+  color: var(--amber-300);
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--moss-600);
+  color: var(--parch-50);
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber-300);
+  outline-offset: 2px;
+}
+
+/* Thin, themed scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--stone-400) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--stone-400);
+  border-radius: var(--r-full);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- Shared primitives ---------- */
+
+/* Raised stone panel */
+.panel {
+  background: linear-gradient(160deg, var(--stone-500), var(--ink-700));
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-inset), var(--shadow-md);
+}
+
+/* Parchment panel (inverted: light text block) */
+.parchment {
+  background: linear-gradient(170deg, #2a2318, #1e1811);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--amber-500);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-inset);
+}
+
+/* Small uppercase kicker / eyebrow */
+.eyebrow {
+  font-family: var(--font-ui);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--sepia-400);
+}
+
+/* Display heading (bookish serif) */
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--parch-100);
+}
+
+/* Chip / tag */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--moss-700);
+  background: linear-gradient(var(--moss-700), #232c13);
+  color: var(--moss-200);
+  white-space: nowrap;
+}
+.chip--amber {
+  border-color: var(--amber-600);
+  background: linear-gradient(#3a2a14, #281c0c);
+  color: var(--amber-200);
+}
+.chip--blood {
+  border-color: var(--blood-700);
+  background: linear-gradient(#3a1712, #2a100b);
+  color: var(--blood-300);
+}
+
+/* Primary action button */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 48px;
+  padding: 0 var(--sp-5);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  letter-spacing: 0.02em;
+  color: var(--ink-950);
+  background: linear-gradient(var(--amber-200), var(--amber-400));
+  box-shadow: 0 3px 0 var(--amber-600), var(--shadow-md);
+  transition: transform 0.08s var(--ease-out), box-shadow 0.08s var(--ease-out);
+}
+.btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--amber-600), var(--shadow-sm);
+}
+.btn--moss {
+  background: linear-gradient(var(--moss-300), var(--moss-500));
+  box-shadow: 0 3px 0 var(--moss-700), var(--shadow-md);
+  color: #10150a;
+}
+.btn--ghost {
+  background: linear-gradient(var(--stone-500), var(--stone-600));
+  color: var(--parch-200);
+  box-shadow: 0 3px 0 var(--line), var(--shadow-sm);
+}
+
+/* Horizontal divider that fades at the edges */
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--sepia-400), transparent);
+  opacity: 0.4;
+}
+
+/* Utility */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

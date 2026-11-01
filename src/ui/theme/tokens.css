@@ -1,0 +1,105 @@
+/* ============================================================
+   4AD design tokens — Dragonbane / Nordic-folklore dark fantasy
+   Muted earthy palette · ink-black · parchment · moss · amber
+   ============================================================ */
+:root {
+  color-scheme: dark;
+
+  /* --- Ink / stone (surfaces, darkest → raised) --- */
+  --ink-950: #0c0a07;
+  --ink-900: #100e0a;
+  --ink-800: #14110d;
+  --ink-700: #1b1712;
+  --stone-600: #241f18;
+  --stone-500: #2d261d;
+  --stone-400: #3a3125;
+  --stone-300: #4a3f30;
+  --line: #0a0806;
+
+  /* --- Parchment / text --- */
+  --parch-50: #f4ecd8;
+  --parch-100: #e7dcc0;
+  --parch-200: #d9caa4;
+  --parch-300: #c3b288;
+  --parch-400: #a99a76;
+  --muted: #857a5f;
+  --muted-2: #6b6250;
+
+  /* --- Moss / growth (positive, environment, calm) --- */
+  --moss-200: #bccd7e;
+  --moss-300: #9fb263;
+  --moss-400: #7d9147;
+  --moss-500: #5d6f34;
+  --moss-600: #3c4a26;
+  --moss-700: #2b3419;
+
+  /* --- Amber / torchlight (focus, actions, dice) --- */
+  --amber-100: #f7dfa6;
+  --amber-200: #f4d18a;
+  --amber-300: #e8b45c;
+  --amber-400: #cf9a41;
+  --amber-500: #a97c2b;
+  --amber-600: #6c4d1c;
+
+  /* --- Blood / danger (damage, foes, loss) --- */
+  --blood-300: #e07a63;
+  --blood-400: #d7604b;
+  --blood-500: #ad3d2d;
+  --blood-600: #7d2a1f;
+  --blood-700: #521a13;
+
+  /* --- Sepia / arcane (magic, lore, subtitles) --- */
+  --sepia-300: #c79e5f;
+  --sepia-400: #9c7c4e;
+  --violet-400: #8a7fb0;
+  --violet-500: #6a5f92;
+
+  /* --- Typography --- */
+  --font-display: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, 'Times New Roman', serif;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  /* --- Type scale (fluid, rem) --- */
+  --text-2xs: 0.66rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.83rem;
+  --text-base: 0.94rem;
+  --text-md: 1.05rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 1.9rem;
+  --text-3xl: 2.4rem;
+
+  /* --- Spacing (4px rhythm) --- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* --- Radii (crisp, stone-cut) --- */
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-full: 999px;
+
+  /* --- Shadows (chiaroscuro depth) --- */
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 34px rgba(0, 0, 0, 0.6);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 0 24px rgba(0, 0, 0, 0.35);
+  --glow-amber: 0 0 18px rgba(232, 180, 92, 0.28);
+  --glow-moss: 0 0 16px rgba(125, 145, 71, 0.25);
+
+  /* --- Layout --- */
+  --tabbar-h: 60px;
+  --header-h: 56px;
+  --app-max: 480px;
+
+  /* --- Motion --- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
