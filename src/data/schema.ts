@@ -204,3 +204,49 @@ export const FoeTable = z.object({
 export type FoeTable = z.infer<typeof FoeTable>
 
 export const FoeTableList = z.array(FoeTable)
+
+/* ============================================================
+   Spells
+   ============================================================ */
+
+export const Spell = z.object({
+  id: z.string(),
+  name: z.string(),
+  school: SpellSchool,
+  /** Position on the school's random table (wizard d6; druid/illusionist d12). */
+  roll: z.number(),
+  /** Whether casting needs a spellcasting roll vs the target's L. */
+  requiresRoll: z.boolean(),
+  text: z.string(),
+})
+export type Spell = z.infer<typeof Spell>
+
+export const SpellList = z.array(Spell)
+
+/* ============================================================
+   Equipment
+   ============================================================ */
+
+export const EquipCategory = z.enum(['weapon', 'armor', 'light', 'consumable', 'item', 'service'])
+export type EquipCategory = z.infer<typeof EquipCategory>
+
+export const Equipment = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** Price in gp (services may be a flat fee). */
+  price: z.number(),
+  /** Price qualifier, e.g. "per dozen", "per vial", "service". */
+  priceNote: z.string().optional(),
+  category: EquipCategory,
+  /** Weapon Attack modifier, e.g. -1, +1, +2, +3. */
+  attackMod: z.number().optional(),
+  /** Armor/Shield Defense bonus. */
+  defenseMod: z.number().optional(),
+  /** Hands required (1 or 2). */
+  hands: z.number().optional(),
+  damageType: z.enum(['crushing', 'slashing']).optional(),
+  text: z.string(),
+})
+export type Equipment = z.infer<typeof Equipment>
+
+export const EquipmentList = z.array(Equipment)
