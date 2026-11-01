@@ -85,3 +85,35 @@ export function neverTestsMorale(morale: string): boolean {
   const m = morale.toLowerCase()
   return m.includes('never') || m.includes('fight to the death')
 }
+
+/** Parse a Foe's level string ("HCL+2", "HCL", "L3") at a given HCL. */
+export function parseFoeLevel(str: string, hclValue: number, maxLevel?: number): number {
+  const s = str.trim()
+  const abs = /^L\s*(\d+)/i.exec(s)
+  if (abs) return parseInt(abs[1] ?? '1', 10)
+  const m = /^HCL\s*([+-]\s*\d+)?/.exec(s)
+  const mod = m && m[1] ? parseInt(m[1].replace(/\s+/g, ''), 10) : 0
+  let l = hclValue + mod
+  if (l < 1) l = 1
+  if (maxLevel !== undefined && l > maxLevel) l = maxLevel
+  return l
+}
+
+/** Parse a Foe's Life string ("Tier+3", "HCL+2", "7", "HCL (min. 3)"). */
+export function parseFoeLife(str: string | undefined, hclValue: number, tierValue: number): number | undefined {
+  if (!str) return undefined
+  const s = str.replace(/\s+/g, ' ').trim()
+  const digits = /^(\d+)$/.exec(s)
+  if (digits) return parseInt(digits[1]!, 10)
+  const min = /\(min(?:imum)?\.?\s*(\d+)\)/i.exec(s)
+  const minVal = min ? parseInt(min[1]!, 10) : undefined
+  let base: number
+  const tierM = /^Tier\s*([+-]\s*\d+)?/i.exec(s)
+  if (tierM) base = tierValue + (tierM[1] ? parseInt(tierM[1].replace(/\s+/g, ''), 10) : 0)
+  else {
+    const hclM = /^HCL\s*([+-]\s*\d+)?/i.exec(s)
+    base = hclValue + (hclM && hclM[1] ? parseInt(hclM[1].replace(/\s+/g, ''), 10) : 0)
+  }
+  if (minVal !== undefined && base < minVal) base = minVal
+  return Math.max(1, base)
+}
