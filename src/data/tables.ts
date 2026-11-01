@@ -352,4 +352,37 @@ export const tables: RandTable[] = [
     ],
     note: 'For a random basic spell (e.g. a scroll found as loot).',
   },
+
+  /* ---- Fiendish Foes Treasure (p.185) ---- */
+  {
+    id: 'fiendish-treasure',
+    name: 'Fiendish Foes Treasure Table',
+    dice: 'd6',
+    environment: 'fiendish',
+    entries: [
+      { roll: '0-', result: 'No Treasure found.' },
+      { roll: '1', result: '2d6 x2gp.' },
+      { roll: '2', result: '2d6 x5gp.' },
+      { roll: '3', result: 'Choose: 1 scroll (scroll, bark or prism) with a random spell, or 1 non-magical weapon of your choice. 2-in-6 it is silvered (+20gp resale, or 40gp if two-handed).' },
+      { roll: '4', result: '1 gem worth 2d6 x 10gp.' },
+      { roll: '5', result: '1 item of jewelry worth 2d6 x 20gp.' },
+      { roll: '6+', result: 'Roll on the Fiendish Foes Magic Treasure Table.' },
+    ],
+  },
+
+  /* ---- Fiendish Foes Magic Treasure (p.186) ---- */
+  {
+    id: 'fiendish-magic-treasure',
+    name: 'Fiendish Foes Magic Treasure Table',
+    dice: 'd6',
+    environment: 'fiendish',
+    entries: [
+      { roll: '1', result: 'Magic weapon: d6 → 1-4 +1 Attack, 5-6 +2. Roll d6 for type (slashing light, crushing hand, slashing hand ×2, crushing 2-handed, slashing 2-handed).' },
+      { roll: '2', result: 'Magic armor: 1d6 → 1-4 +1 Defense, 5-6 +2 (permanent). Roll d6: 1-2 shield, 3 light armor, 4-5 heavy armor, 6 a ring of protection (any class except…).' },
+      { roll: '3', result: '1d3+1 Vials (roll d6 each): 1-3 Healing potion (heal all Life, free action, one per adventure, not barbarians; 100gp); 4-5 Acid (thrown; d6: 1 splashes user for 1 damage, 2+ inflicts 1 on a Foe; no effect on undead/goblins; trolls don’t regenerate vs. acid; 15gp); 6 Holy water.' },
+      { roll: '4', result: 'Wand of power (wizards only), 2d3 charges: each adds +1 to any spellcasting roll (decide charges before rolling; may stack). Resale 20gp/charge.' },
+      { roll: '5', result: 'Enchanted paint: whatever is painted becomes real (a door, weapons, armor, up to 8 Food rations). Item must be non-magical and ≤15gp; no liquids. Each use: 1-in-6 it runs out. Resale 80gp.' },
+      { roll: '6', result: 'Necklace with d6 prayer beads (each one use). A cleric may use 1 bead with a Prayer: d6 → 1-3 no effect (Prayer cast normally), 4-6 the Prayer works but isn’t spent. Bead destroyed each roll. Resale 15gp/bead.' },
+    ],
+  },
 ]

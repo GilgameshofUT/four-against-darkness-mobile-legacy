@@ -144,3 +144,63 @@ export const RandTable = z.object({
 export type RandTable = z.infer<typeof RandTable>
 
 export const RandTableList = z.array(RandTable)
+
+/* ============================================================
+   Foes (monsters) — one structured statblock per creature
+   ============================================================ */
+
+/** Coarse foe class, matching the book's table groupings. */
+export const FoeKind = z.enum(['vermin', 'minion', 'weird', 'boss', 'event'])
+export type FoeKind = z.infer<typeof FoeKind>
+
+export const Foe = z.object({
+  name: z.string(),
+  /** How many appear, e.g. "3d6", "d6+3", "d3", "2d6+1". */
+  count: z.string().optional(),
+  kind: FoeKind,
+  /** Level formula relative to HCL, e.g. "HCL+2", "HCL". */
+  level: z.string(),
+  /** Level cap, e.g. 4, 6, 10. */
+  maxLevel: z.number().optional(),
+  /** Life for major foes, e.g. "Tier+3", "HCL+3", "7", "HCL (min. 3)". */
+  life: z.string().optional(),
+  /** Attacks per turn. */
+  attacks: z.number().optional(),
+  /** Per-attack damage when not the default 1, e.g. "Tier+1". */
+  damage: z.string().optional(),
+  /** Treasure as written: "none", "-1", "+2", "2 rolls", "1 roll", "see below". */
+  treasure: z.string(),
+  /** Morale: "standard", "-1", "+1", "+2", "never", "always fight to the death". */
+  morale: z.string(),
+  /** Reactions as written, e.g. "1-3 Flee, 4-6 Fight", "Always Fight". */
+  reactions: z.string(),
+  /** Tags: undead, animal, chaos, artificial, elemental, slime, mushroom, dragon, were… */
+  tags: z.array(z.string()).default([]),
+  /** Special rules text (abilities, immunities, on-hit effects). */
+  text: z.string().optional(),
+})
+export type Foe = z.infer<typeof Foe>
+
+export const FoeEntry = z.object({
+  /** d6 result, "1"–"6". */
+  roll: z.string(),
+  /** One foe normally; two for "roll d6: 1-3 = X, 4-6 = Y" choice rows. */
+  foes: z.array(Foe).min(1),
+  /** For choice rows: how to sub-roll among the foes. */
+  subRoll: z.string().optional(),
+  /** Special text shared by every Foe in this row. */
+  text: z.string().optional(),
+})
+export type FoeEntry = z.infer<typeof FoeEntry>
+
+export const FoeTable = z.object({
+  id: z.string(),
+  name: z.string(),
+  dice: z.string(),
+  environment: Environment,
+  entries: z.array(FoeEntry).min(1),
+  note: z.string().optional(),
+})
+export type FoeTable = z.infer<typeof FoeTable>
+
+export const FoeTableList = z.array(FoeTable)
