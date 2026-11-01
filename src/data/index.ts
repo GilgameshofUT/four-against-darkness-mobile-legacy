@@ -4,5 +4,6 @@ export { tables } from './tables'
 export { foeTables } from './monsters'
 export { spells } from './spells'
 export { equipment } from './equipment'
+export { scenarios } from './scenarios'
 
 export * from './schema'

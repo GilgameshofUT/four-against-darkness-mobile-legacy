@@ -250,3 +250,24 @@ export const Equipment = z.object({
 export type Equipment = z.infer<typeof Equipment>
 
 export const EquipmentList = z.array(Equipment)
+
+/* ============================================================
+   Scenarios (adventures)
+   ============================================================ */
+
+export const Scenario = z.object({
+  id: z.string(),
+  name: z.string(),
+  intro: z.string(),
+  /** "table-driven" rolls on its own tables; "scripted" is a paragraph adventure. */
+  kind: z.enum(['table-driven', 'scripted']),
+  /** Scenario-specific random tables. */
+  tables: z.array(RandTable).default([]),
+  /** Scenario-specific foe tables. */
+  foeTables: z.array(FoeTable).default([]),
+  /** Rules, bosses, secrets and endings printed with the scenario. */
+  notes: z.array(z.string()).default([]),
+})
+export type Scenario = z.infer<typeof Scenario>
+
+export const ScenarioList = z.array(Scenario)
