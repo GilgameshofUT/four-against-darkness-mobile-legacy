@@ -1,102 +1,102 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import {
-  rollFirstRoom, rollTileShape, rollTileContent, rollSearch,
-  type Dir, type SearchOutcome, type TileOutcome, type TileShape,
-} from '../core/dungeon'
+import { parseTile, rotateTile, opposite, delta, type Dir, type TileSpec } from '../core/tiles'
+import { ALL_TILE_SPECS, D66_TILES, STARTING_TILES } from '../core/tileshapes'
+import { resolveTileContent, resolveSearch, type SearchOutcome, type TileOutcome } from '../core/dungeon'
+import { rollD66, rollDie } from '../core/dice'
 
 export type Environment = 'dungeon' | 'caverns' | 'fungal'
 
-export interface Tile {
-  id: string
-  shape: TileShape
-  /** Grid origin (in cells) of this tile's shape cells. */
-  x: number
+export interface DoorRef {
   y: number
+  x: number
+  dir: Dir
+  /** Tile this door opens into, or null = leads into the unexplored dark. */
+  connectedTo: string | null
+}
+
+export interface PlacedTile {
+  id: string
+  specKey: number
+  corridor: boolean
+  rotation: number
   environment: Environment
   content: TileOutcome
   searched: boolean
-  /** Openings on this tile (doors). */
-  openings: Dir[]
-  /** Connector-corridor cells in grid coords, joining this tile to the previous one. */
-  extraCells?: Array<[number, number]>
-  /** Door markers in grid coords (exit/entry of the connector). */
-  doors?: Array<[number, number]>
+  floors: Array<[number, number]>
+  doors: DoorRef[]
 }
 
-/** Max grid columns before stacking the next tile below instead of right. */
-const MAX_COLS = 26
+const SPEC_BY_KEY = new Map<number, TileSpec>(ALL_TILE_SPECS.map((s) => [s.key, s]))
+const cellKey = (y: number, x: number) => `${y},${x}`
 
 interface DungeonState {
-  tiles: Tile[]
+  tiles: PlacedTile[]
   currentId: string | null
   environment: Environment
   majorFoesMet: number
-  finalBossFound: boolean
   started: boolean
-  /** Pending encounter from the current tile (foe kind), consumed by combat. */
+  /** Encounter pending from the current tile, consumed by combat. */
   pendingEncounter: { foeKind: 'vermin' | 'minion' | 'weird' | 'boss'; tileId: string } | null
+  /** Message shown to guide the player (blocked door, wandering monsters…). */
+  lastMessage: string | null
+
   start: () => void
-  rollNext: () => TileOutcome | null
+  /** Walk through a connected door, or generate a new tile through an open one. */
+  chooseDoor: (tileId: string, y: number, x: number) => void
+  openDoors: (tileId: string) => DoorRef[]
+  connectedDoors: (tileId: string) => DoorRef[]
   searchCurrent: () => SearchOutcome | null
-  moveCurrent: (id: string) => void
   setEnvironment: (env: Environment) => void
   clearEncounter: () => void
+  clearMessage: () => void
   noteMajorFoe: () => void
   reset: () => void
 }
 
 let n = 0
-const newId = () => `tile-${Date.now()}-${n++}`
+const newId = () => `tile-${n++}`
 
-/** Min/max extents of a shape's cells (shapes may use negative coords). */
-function shapeExtents(shape: TileShape): { minX: number; maxX: number; minY: number; maxY: number } {
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-  for (const [cx, cy] of shape.cells) {
-    if (cx < minX) minX = cx
-    if (cx > maxX) maxX = cx
-    if (cy < minY) minY = cy
-    if (cy > maxY) maxY = cy
-  }
-  if (!Number.isFinite(minX)) return { minX: 0, maxX: 0, minY: 0, maxY: 0 }
-  return { minX, maxX, minY, maxY }
-}
-
-type Cell = [number, number]
-const cellKey = (x: number, y: number) => `${x},${y}`
-
-/** Median cell of a list along a projection (picks a middle exit/entry cell). */
-function medianBy(cells: Array<[number, number]>, by: (c: [number, number]) => number): Cell {
-  const sorted = [...cells].sort((a, b) => by(a) - by(b))
-  const m = sorted[Math.floor(sorted.length / 2)]
-  return m ? [m[0], m[1]] : [0, 0]
+/** All occupied floor cells across every placed tile. */
+function occupiedSet(tiles: PlacedTile[]): Set<string> {
+  const s = new Set<string>()
+  for (const t of tiles) for (const [y, x] of t.floors) s.add(cellKey(y, x))
+  return s
 }
 
 /**
- * L-shaped corridor from E to N, excluding both endpoints.
- * The horizontal run always reaches column N.x (so the corner turn
- * is 4-connected), then the vertical run climbs to N.
+ * Try to place `spec` so one of its doors lands on `target` facing back at it.
+ * Rotates the tile as needed; returns null if every orientation overlaps.
  */
-function corridorCells(E: Cell, N: Cell): Cell[] {
-  const [ex, ey] = E
-  const [nx, ny] = N
-  const cells: Cell[] = []
-  if (nx !== ex) {
-    const stepX = nx > ex ? 1 : -1
-    if (ey === ny) {
-      for (let x = ex + stepX; x !== nx; x += stepX) cells.push([x, ey])
-    } else {
-      for (let x = ex + stepX; ; x += stepX) {
-        cells.push([x, ey])
-        if (x === nx) break
+function tryPlace(
+  spec: TileSpec,
+  target: { y: number; x: number; dir: Dir },
+  occupied: Set<string>,
+): { rotation: number; floors: Array<[number, number]>; doors: Array<{ y: number; x: number; dir: Dir }>; door: { y: number; x: number; dir: Dir } } | null {
+  for (let r = 0; r < 4; r++) {
+    const rot = rotateTile(parseTile(spec), r)
+    for (const nd of rot.doors) {
+      if (opposite(nd.dir) !== target.dir) continue
+      const oy = target.y - nd.y
+      const ox = target.x - nd.x
+      let ok = true
+      for (const [fy, fx] of rot.floors) {
+        if (occupied.has(cellKey(oy + fy, ox + fx))) {
+          ok = false
+          break
+        }
+      }
+      if (ok) {
+        return {
+          rotation: r,
+          floors: rot.floors.map(([y, x]) => [oy + y, ox + x] as [number, number]),
+          doors: rot.doors.map((d) => ({ y: oy + d.y, x: ox + d.x, dir: d.dir })),
+          door: { y: oy + nd.y, x: ox + nd.x, dir: nd.dir },
+        }
       }
     }
   }
-  if (ny !== ey) {
-    const stepY = ny > ey ? 1 : -1
-    for (let y = ey + stepY; y !== ny; y += stepY) cells.push([nx, y])
-  }
-  return cells
+  return null
 }
 
 export const useDungeon = create<DungeonState>()(
@@ -106,136 +106,160 @@ export const useDungeon = create<DungeonState>()(
       currentId: null,
       environment: 'dungeon',
       majorFoesMet: 0,
-      finalBossFound: false,
       started: false,
       pendingEncounter: null,
+      lastMessage: null,
 
       start: () => {
-        const shape = rollFirstRoom()
-        const tile: Tile = {
+        const spec = STARTING_TILES[rollDie(Math.random, STARTING_TILES.length) - 1]!
+        const parsed = parseTile(spec)
+        const tile: PlacedTile = {
           id: newId(),
-          shape,
-          x: 0,
-          y: 0,
+          specKey: spec.key,
+          corridor: spec.corridor,
+          rotation: 0,
           environment: get().environment,
           content: { kind: 'empty' }, // first room has no content (p.104)
           searched: false,
-          openings: shape.openings,
+          floors: parsed.floors.map(([y, x]) => [y, x] as [number, number]),
+          doors: parsed.doors.map((d) => ({ y: d.y, x: d.x, dir: d.dir, connectedTo: null })),
         }
-        set({ tiles: [tile], currentId: tile.id, started: true })
+        set({ tiles: [tile], currentId: tile.id, started: true, lastMessage: null })
       },
 
-      rollNext: () => {
-        const { tiles, currentId, environment } = get()
-        const current = tiles.find((t) => t.id === currentId)
-        if (!current) return null
+      openDoors: (tileId) => get().tiles.find((t) => t.id === tileId)?.doors.filter((d) => !d.connectedTo) ?? [],
+      connectedDoors: (tileId) => get().tiles.find((t) => t.id === tileId)?.doors.filter((d) => d.connectedTo) ?? [],
 
-        const shape = rollTileShape()
-        const ce = shapeExtents(current.shape)
-        const ne = shapeExtents(shape)
+      chooseDoor: (tileId, y, x) => {
+        const { tiles, environment } = get()
+        const tile = tiles.find((t) => t.id === tileId)
+        if (!tile) return
+        const door = tile.doors.find((d) => d.y === y && d.x === x)
+        if (!door) return
 
-        // Grid cells already drawn (all tiles incl. their connectors).
-        const occupied = new Set<string>()
-        for (const t of tiles) {
-          for (const [cx, cy] of t.shape.cells) occupied.add(cellKey(t.x + cx, t.y + cy))
-          for (const [gx, gy] of t.extraCells ?? []) occupied.add(cellKey(gx, gy))
-        }
-        const overlaps = (sx: number, sy: number) => {
-          for (const [cx, cy] of shape.cells) {
-            if (occupied.has(cellKey(sx + cx, sy + cy))) return true
-          }
-          return false
-        }
-
-        // Same-row placement: right of the current tile with a1-cell gap.
-        let x = current.x + ce.maxX + 2 - ne.minX
-        let y = current.y
-        let below = false
-        if (x + ne.maxX > MAX_COLS || overlaps(x, y)) {
-          // Stack below the current tile instead: rows only grow downward,
-          // so shifting further down always finds clear space.
-          below = true
-          x = Math.max(current.x, -ne.minX)
-          y = current.y + ce.maxY + 2 - ne.minY
-        }
-        // Universal safety: nudge down until no shape cell overlaps.
-        // (Same-row siblings can extend lower than the current tile,
-        // so the below-placement guess is not automatically clear.)
-        let guard = 0
-        while (overlaps(x, y) && guard < 500) {
-          y += 1
-          guard += 1
-        }
-        if (guard >= 500) throw new Error('Could not place tile: map is full')
-
-        // Exit on the current tile: rightmost column (same row) or bottom row (below).
-        const exitLocal = below
-          ? medianBy(current.shape.cells.filter(([, cy]) => cy === ce.maxY), ([cx]) => cx)
-          : medianBy(current.shape.cells.filter(([cx]) => cx === ce.maxX), ([, cy]) => cy)
-        const E: Cell = [current.x + exitLocal[0], current.y + exitLocal[1]]
-
-        // Entry on the new tile: leftmost column (same row) or top row (below).
-        const entryLocal = below
-          ? medianBy(shape.cells.filter(([, cy]) => cy === ne.minY), ([cx]) => cx)
-          : medianBy(shape.cells.filter(([cx]) => cx === ne.minX), ([, cy]) => cy)
-        const N: Cell = [x + entryLocal[0], y + entryLocal[1]]
-
-        // Carve the connector; skip cells already drawn by older tiles
-        // (the path stays walkable through them).
-        const extraCells: Cell[] = []
-        for (const [gx, gy] of corridorCells(E, N)) {
-          if (!occupied.has(cellKey(gx, gy))) extraCells.push([gx, gy])
+        // --- Walk back through a known door ---
+        if (door.connectedTo) {
+          const dest = door.connectedTo
+          // Retracing your steps: d6 →1, Wandering Monsters attack (p.104).
+          const wander = rollDie(Math.random, 6) === 1
+          set({
+            currentId: dest,
+            lastMessage: wander ? 'As you retrace your steps, Wandering Monsters attack!' : null,
+            pendingEncounter: wander ? { foeKind: rollWanderingKind(), tileId: dest } : null,
+          })
+          return
         }
 
-        const content = rollTileContent(undefined, shape.isCorridor)
-        const tile: Tile = {
-          id: newId(),
-          shape,
-          x,
-          y,
+        // --- Expand into the dark through an open door ---
+        const spec = specFromD66()
+        const target = { y: door.y + delta(door.dir)[0], x: door.x + delta(door.dir)[1], dir: door.dir }
+        const placed = tryPlace(spec, target, occupiedSet(tiles))
+        if (!placed) {
+          set({ lastMessage: 'No room to expand that way — choose another door.' })
+          return
+        }
+
+        const content = resolveTileContent(rollDie(Math.random, 6) + rollDie(Math.random, 6), spec.corridor)
+        const id = newId()
+        const newTile: PlacedTile = {
+          id,
+          specKey: spec.key,
+          corridor: spec.corridor,
+          rotation: placed.rotation,
           environment,
           content,
           searched: false,
-          openings: shape.openings,
-          extraCells,
-          doors: [N],
+          floors: placed.floors,
+          doors: placed.doors.map((d) => ({
+            ...d,
+            connectedTo: d.y === placed.door.y && d.x === placed.door.x ? tile.id : null,
+          })),
         }
 
+        const nextTiles = tiles
+          .map((t) =>
+            t.id === tile.id
+              ? { ...t, doors: t.doors.map((d) => (d.y === y && d.x === x ? { ...d, connectedTo: id } : d)) }
+              : t,
+          )
+          .concat(newTile)
+
         const pending =
-          content.kind === 'foe'
-            ? { foeKind: content.foeKind, tileId: tile.id }
-            : null
+          content.kind === 'foe' ? { foeKind: content.foeKind, tileId: id } : null
 
         set({
-          tiles: tiles
-            .map((t) => (t.id === current.id ? { ...t, doors: [...(t.doors ?? []), E] } : t))
-            .concat(tile),
-          currentId: tile.id,
+          tiles: nextTiles,
+          currentId: id,
           pendingEncounter: pending,
+          lastMessage: null,
         })
-        return content
       },
 
       searchCurrent: () => {
         const { tiles, currentId } = get()
         const t = tiles.find((x) => x.id === currentId)
         if (!t || t.searched) return null
-        const corridor = t.shape.isCorridor
-        const out = rollSearch(undefined, corridor)
+        const out = resolveSearch(rollDie(Math.random, 6) + (t.corridor ? -1 : 0))
         set({ tiles: tiles.map((x) => (x.id === t.id ? { ...x, searched: true } : x)) })
+        if (out === 'wandering') {
+          set({ pendingEncounter: { foeKind: rollWanderingKind(), tileId: t.id } })
+        }
         return out
       },
 
-      moveCurrent: (id) => set({ currentId: id }),
       setEnvironment: (environment) => set({ environment }),
-
       clearEncounter: () => set({ pendingEncounter: null }),
-      noteMajorFoe: () =>
-        set((s) => ({ majorFoesMet: s.majorFoesMet + 1 })),
+      clearMessage: () => set({ lastMessage: null }),
+      noteMajorFoe: () => set((s) => ({ majorFoesMet: s.majorFoesMet + 1 })),
 
       reset: () =>
-        set({ tiles: [], currentId: null, started: false, majorFoesMet: 0, finalBossFound: false, pendingEncounter: null }),
+        set({
+          tiles: [],
+          currentId: null,
+          started: false,
+          majorFoesMet: 0,
+          pendingEncounter: null,
+          lastMessage: null,
+        }),
     }),
-    { name: '4ad-dungeon' },
+    {
+      name: '4ad-dungeon',
+      version: 1,
+      // Old builds persisted a different tile shape; drop stale maps on load.
+      migrate: (persisted) => {
+        const p = persisted as Partial<DungeonState> | undefined
+        const malformed =
+          !p ||
+          !Array.isArray(p.tiles) ||
+          (p.tiles.length > 0 && !Array.isArray((p.tiles[0] as { floors?: unknown }).floors))
+        if (malformed) {
+          return {
+            tiles: [],
+            currentId: null,
+            environment: 'dungeon',
+            majorFoesMet: 0,
+            started: false,
+            pendingEncounter: null,
+            lastMessage: null,
+          }
+        }
+        return p as DungeonState
+      },
+    },
   ),
 )
+
+/** d66 → tile spec (keys11–66). */
+function specFromD66(): TileSpec {
+  const key = 11 + (rollD66(Math.random) - 11)
+  return SPEC_BY_KEY.get(key) ?? D66_TILES[0]!
+}
+
+/** Wandering Monsters table (d6):1-2 vermin,3-4 minion,5 weird,6 boss. */
+function rollWanderingKind(): 'vermin' | 'minion' | 'weird' | 'boss' {
+  const d = rollDie(Math.random, 6)
+  if (d <= 2) return 'vermin'
+  if (d <= 4) return 'minion'
+  if (d === 5) return 'weird'
+  return 'boss'
+}

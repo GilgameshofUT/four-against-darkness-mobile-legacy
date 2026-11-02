@@ -2,25 +2,25 @@ import { useState } from 'react'
 import { ScreenShell } from '../components/ScreenShell'
 import { TileMap } from '../components/TileMap'
 import { tables } from '../../data/tables'
-import { useDungeon, type Environment } from '../../state/dungeon'
+import { useDungeon, type Environment, type DoorRef } from '../../state/dungeon'
 import { useUi } from '../../state/ui'
 import { partyHcl, useParty } from '../../state/party'
 import type { RandTable } from '../../data/schema'
 
+const DIR_NAME: Record<string, string> = { N: 'North', E: 'East', S: 'South', W: 'West' }
+
 function getTable(id: string): RandTable | undefined {
   return tables.find((t) => t.id === id)
 }
-
-/** Roll one entry from a table (uniform over entries). */
-function rollTable(t: RandTable): { roll: string; result: string } {
+function rollTable(t: RandTable): string {
   const e = t.entries[Math.floor(Math.random() * t.entries.length)]
-  return { roll: e?.roll ?? '?', result: e?.result ?? '' }
+  return e?.result ?? ''
 }
 
 interface Outcome {
   title: string
   body: string
-  action?: 'fight' | 'search'
+  action?: 'fight' | 'search' | undefined
 }
 
 const ENV_TABLES: Record<Environment, { feature: string; event: string; trap: string }> = {
@@ -34,45 +34,53 @@ export function DungeonScreen() {
   const party = useParty((s) => s.party)
   const setTab = useUi((s) => s.setTab)
   const [outcome, setOutcome] = useState<Outcome | null>(null)
+  const [confirmClear, setConfirmClear] = useState(false)
 
   const hcl = partyHcl(party)
   const current = d.tiles.find((t) => t.id === d.currentId)
 
   const rollFor = (kind: string, env: Environment): Outcome => {
     const et = ENV_TABLES[env]
-    if (kind === 'treasure') {
-      const a = rollTable(getTable('treasure')!)
-      return { title: 'Treasure', body: a.result }
-    }
-    if (kind === 'treasure-trap') {
-      const trap = rollTable(getTable(et.trap)!)
-      const a = rollTable(getTable('treasure')!)
-      return { title: 'Trapped treasure', body: `Trap — ${trap.result}\n\nLoot — ${a.result}` }
-    }
-    if (kind === 'special-feature') {
-      const a = rollTable(getTable(et.feature)!)
-      return { title: 'Special feature', body: a.result }
-    }
-    if (kind === 'special-event') {
-      const a = rollTable(getTable(et.event)!)
-      return { title: 'Special event', body: a.result }
-    }
-    if (kind === 'dragon-lair')
-      return { title: 'Dragon’s lair', body: 'A dragon guards this lair.', action: 'fight' }
+    if (kind === 'treasure') return { title: 'Treasure', body: rollTable(getTable('treasure')!) }
+    if (kind === 'treasure-trap')
+      return {
+        title: 'Trapped treasure',
+        body: `Trap — ${rollTable(getTable(et.trap)!)}\n\nLoot — ${rollTable(getTable('treasure')!)}`,
+      }
+    if (kind === 'special-feature') return { title: 'Special feature', body: rollTable(getTable(et.feature)!) }
+    if (kind === 'special-event') return { title: 'Special event', body: rollTable(getTable(et.event)!) }
+    if (kind === 'dragon-lair') return { title: 'Dragon’s lair', body: 'A dragon guards this lair.', action: 'fight' }
     return { title: kind, body: '' }
   }
 
-  const onRollTile = () => {
-    const content = d.rollNext()
-    if (!content) return
-    if (content.kind === 'foe') {
-      const names = { vermin: 'Vermin', minion: 'Minions', weird: 'A Weird Monster', boss: 'A Boss!' }
-      setOutcome({ title: 'Encounter!', body: `${names[content.foeKind]} block your path.`, action: 'fight' })
-    } else if (content.kind === 'empty') {
-      setOutcome({ title: 'Empty tile', body: 'Nothing here — you may Search it.', action: 'search' })
-    } else {
-      setOutcome(rollFor(content.kind, d.environment))
+  const showContent = (kind: string, env: Environment) => {
+    if (kind === 'foe') setOutcome({ title: 'Encounter!', body: 'Foes block your path.', action: 'fight' })
+    else if (kind === 'empty') setOutcome({ title: 'Empty tile', body: 'Nothing here — you may Search it.', action: 'search' })
+    else setOutcome(rollFor(kind, env))
+  }
+
+  /** The player picks a door: walk back through a known one, or into the dark. */
+  const onDoor = (door: DoorRef) => {
+    const prevId = d.currentId
+    d.chooseDoor(d.currentId!, door.y, door.x)
+    const st = useDungeon.getState()
+
+    if (st.lastMessage) {
+      setOutcome({
+        title: st.pendingEncounter ? 'Ambush!' : 'Notice',
+        body: st.lastMessage,
+        action: st.pendingEncounter ? 'fight' : undefined,
+      })
+      return
     }
+    if (st.currentId === prevId) return // blocked: no room
+    const cur = st.tiles.find((t) => t.id === st.currentId)
+    if (!cur) return
+    if (st.pendingEncounter) {
+      setOutcome({ title: 'Encounter!', body: 'Foes block your path.', action: 'fight' })
+      return
+    }
+    showContent(cur.content.kind, cur.environment)
   }
 
   const onSearch = () => {
@@ -88,27 +96,19 @@ export function DungeonScreen() {
     setTab('combat')
   }
 
-  const [confirmClear, setConfirmClear] = useState(false)
+  const open = current ? d.openDoors(current.id) : []
+  const back = current ? d.connectedDoors(current.id) : []
 
   return (
     <ScreenShell
       eyebrow={`Random Dungeon · HCL ${hcl}`}
       title="The Sunless Warrens"
-      subtitle={d.started ? `${d.tiles.length} tiles · ${d.environment}` : 'Roll a tile, draw it, see what waits inside.'}
-      actions={
-        d.started ? (
-          <button className="btn" onClick={onRollTile}>Roll tile</button>
-        ) : undefined
-      }
+      subtitle={d.started ? `${d.tiles.length} tiles · ${d.environment}` : 'Slay the Final Boss and get out alive.'}
+      actions={undefined}
     >
-      {/* Environment switch (secret passages change this) */}
       <div className="envrow">
         {(['dungeon', 'caverns', 'fungal'] as Environment[]).map((e) => (
-          <button
-            key={e}
-            className={`chip${d.environment === e ? ' chip--amber' : ''}`}
-            onClick={() => d.setEnvironment(e)}
-          >
+          <button key={e} className={`chip${d.environment === e ? ' chip--amber' : ''}`} onClick={() => d.setEnvironment(e)}>
             {e}
           </button>
         ))}
@@ -116,8 +116,7 @@ export function DungeonScreen() {
 
       {!d.started ? (
         <div className="scaffold-note">
-          Your mission: slay the <b>Final Boss</b>, take its Treasure, and get out alive. Roll a tile to
-          place the first room.
+          Your mission: slay the <b>Final Boss</b>, take its Treasure, and get out alive. Roll a tile to place the first room.
           <div style={{ marginTop: 'var(--sp-3)' }}>
             <button className="btn btn--moss" onClick={() => { d.start(); setOutcome(null) }}>
               Enter the dungeon
@@ -132,33 +131,42 @@ export function DungeonScreen() {
 
           {current && (
             <div className="tileinfo">
-              <span className="eyebrow">Current tile</span>
+              <span className="eyebrow">You are in</span>
               <span>
-                {current.shape.isCorridor ? 'Corridor' : 'Room'} · {current.searched ? 'searched' : 'unsearched'} · {current.environment}
+                {current.corridor ? 'a corridor' : 'a room'} · {current.searched ? 'searched' : 'unsearched'} · {current.environment}
               </span>
               <button
                 className={`tileinfo__clear${confirmClear ? ' is-armed' : ''}`}
                 onClick={() => {
-                  if (confirmClear) {
-                    d.reset()
-                    setOutcome(null)
-                    setConfirmClear(false)
-                  } else {
-                    setConfirmClear(true)
-                  }
+                  if (confirmClear) { d.reset(); setOutcome(null); setConfirmClear(false) }
+                  else setConfirmClear(true)
                 }}
-                title="Clear the dungeon and start over"
+                title="Clear the dungeon"
               >
                 {confirmClear ? 'Sure?' : 'Clear'}
               </button>
             </div>
           )}
 
-          {d.pendingEncounter && !outcome && (
-            <div className="outcome outcome--fight">
-              <b>Encounter!</b> Switch to Combat to resolve it.
-              <button className="btn" onClick={goFight}>Fight</button>
-            </div>
+          {/* Door choice — the heart of navigation */}
+          {current && (
+            <>
+              <div className="sect">Choose an exit</div>
+              <div className="doorgroup">
+                {open.map((door) => (
+                  <button key={`${door.y},${door.x}`} className="doorbtn doorbtn--new" onClick={() => onDoor(door)}>
+                    <span className="doorbtn__dir">{DIR_NAME[door.dir]}</span>
+                    <span className="doorbtn__hint">into the dark</span>
+                  </button>
+                ))}
+                {back.map((door) => (
+                  <button key={`${door.y},${door.x}`} className="doorbtn doorbtn--back" onClick={() => onDoor(door)}>
+                    <span className="doorbtn__dir">{DIR_NAME[door.dir]}</span>
+                    <span className="doorbtn__hint">back the way you came</span>
+                  </button>
+                ))}
+              </div>
+            </>
           )}
 
           {outcome && (

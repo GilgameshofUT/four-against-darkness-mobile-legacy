@@ -1,57 +1,86 @@
 import { describe, expect, it } from 'vitest'
 import { useDungeon } from './dungeon'
+import { delta, opposite } from '../core/tiles'
 
-const key = (x: number, y: number) => `${x},${y}`
+const key = (y: number, x: number) => `${y},${x}`
 
-describe('dungeon placement', () => {
-  it('produces a fully connected map with no overlapping tiles', () => {
+describe('dungeon door-choice graph', () => {
+  it('start places a first room with open doors and no content', () => {
     const s = useDungeon.getState()
     s.reset()
     s.start()
-    for (let i = 0; i < 25; i++) useDungeon.getState().rollNext()
-
-    const { tiles } = useDungeon.getState()
-    expect(tiles).toHaveLength(26)
-
-    // No two tiles' shape cells may overlap.
-    const shapeCells = new Set<string>()
-    for (const t of tiles) {
-      for (const [cx, cy] of t.shape.cells) {
-        const k = key(t.x + cx, t.y + cy)
-        expect(shapeCells.has(k), `overlap at ${k}`).toBe(false)
-        shapeCells.add(k)
-      }
-    }
-
-    // Every tile (shapes + connectors) must be one 4-connected component.
-    const all = new Set(shapeCells)
-    for (const t of tiles) for (const [gx, gy] of t.extraCells ?? []) all.add(key(gx, gy))
-
-    const first = [...all][0]!
-    const visited = new Set<string>([first])
-    const queue: string[] = [first]
-    while (queue.length > 0) {
-      const cur = queue.pop()!
-      const [x, y] = cur.split(',').map(Number) as [number, number]
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-        const n = key(x + dx, y + dy)
-        if (all.has(n) && !visited.has(n)) {
-          visited.add(n)
-          queue.push(n)
-        }
-      }
-    }
-    expect(visited.size).toBe(all.size)
+    const { tiles, currentId } = useDungeon.getState()
+    expect(tiles).toHaveLength(1)
+    const t = tiles[0]!
+    expect(t.id).toBe(currentId)
+    expect(t.floors.length).toBeGreaterThan(0)
+    expect(t.doors.length).toBeGreaterThan(0)
+    expect(t.doors.every((d) => d.connectedTo === null)).toBe(true)
   })
 
-  it('every tile after the first has a door on itself and the previous tile', () => {
+  it('choosing an open door attaches a new tile to that exact door', () => {
+    const s = useDungeon.getState()
+    s.reset()
+    s.start()
+    const first = useDungeon.getState().tiles[0]!
+    const door = first.doors[0]!
+
+    useDungeon.getState().chooseDoor(first.id, door.y, door.x)
+
+    const st = useDungeon.getState()
+    expect(st.tiles).toHaveLength(2)
+    const next = st.tiles[1]!
+    expect(st.currentId).toBe(next.id)
+
+    // the chosen door is now connected to the new tile
+    const updatedFirst = st.tiles[0]!
+    const updatedDoor = updatedFirst.doors.find((d) => d.y === door.y && d.x === door.x)!
+    expect(updatedDoor.connectedTo).toBe(next.id)
+
+    // the new tile has a door right beyond the chosen door, facing back at it,
+    // and that door connects to the first tile
+    const [ty, tx] = [door.y + delta(door.dir)[0], door.x + delta(door.dir)[1]]
+    const link = next.doors.find((d) => d.y === ty && d.x === tx)
+    expect(link, 'new tile must have a door at the target cell').toBeDefined()
+    expect(link!.dir).toBe(opposite(door.dir))
+    expect(link!.connectedTo).toBe(first.id)
+  })
+
+  it('new tiles never overlap existing floors', () => {
+    const s = useDungeon.getState()
+    s.reset()
+    s.start()
+    for (let step = 0; step < 20; step++) {
+      const st = useDungeon.getState()
+      const cur = st.tiles.find((t) => t.id === st.currentId)!
+      const open = cur.doors.filter((d) => !d.connectedTo)
+      if (open.length === 0) break
+      const door = open[0]!
+      st.chooseDoor(cur.id, door.y, door.x)
+    }
+
     const { tiles } = useDungeon.getState()
     expect(tiles.length).toBeGreaterThan(1)
-    for (let i = 1; i < tiles.length; i++) {
-      expect((tiles[i]!.doors ?? []).length).toBeGreaterThanOrEqual(1)
+    const seen = new Set<string>()
+    for (const t of tiles) {
+      for (const [y, x] of t.floors) {
+        expect(seen.has(key(y, x)), `overlap at ${key(y, x)}`).toBe(false)
+        seen.add(key(y, x))
+      }
     }
-    for (let i = 0; i < tiles.length - 1; i++) {
-      expect((tiles[i]!.doors ?? []).length).toBeGreaterThanOrEqual(1)
-    }
+  })
+
+  it('choosing a connected door moves back and reconnects the graph', () => {
+    const s = useDungeon.getState()
+    s.reset()
+    s.start()
+    const first = useDungeon.getState().tiles[0]!
+    const door = first.doors[0]!
+    useDungeon.getState().chooseDoor(first.id, door.y, door.x)
+    const second = useDungeon.getState().tiles[1]!
+    // walk back through the new tile's link door
+    const link = second.doors.find((d) => d.connectedTo === first.id)!
+    useDungeon.getState().chooseDoor(second.id, link.y, link.x)
+    expect(useDungeon.getState().currentId).toBe(first.id)
   })
 })
