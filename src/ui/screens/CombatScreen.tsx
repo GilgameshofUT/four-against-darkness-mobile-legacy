@@ -6,6 +6,7 @@ import { partyHcl, useParty } from '../../state/party'
 import { derive } from '../../state/pc'
 import { tables } from '../../data/tables'
 import { rollDie } from '../../core/dice'
+import { attackModVs, type FoeContext } from '../../core/modifiers'
 
 function rollTreasure(): string {
   const t = tables.find((x) => x.id === 'treasure')
@@ -34,6 +35,16 @@ export function CombatScreen() {
   const allDead = combat.active && !foe
   const minor = foe && (foe.kind === 'vermin' || foe.kind === 'minion')
   const underHalf = minor && foe && (foe.remaining ?? 0) < Math.floor((foe.initial ?? 1) / 2)
+  const foeCtx: FoeContext | null = foe
+    ? { name: foe.name, tags: foe.tags, kind: minor ? 'minor' : 'major', count: foe.remaining ?? 1 }
+    : null
+  const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`)
+  const pcRoll = (pc: { classId: string; level: number }) => {
+    if (!foeCtx) return null
+    const tier = pc.level >= 20 ? 5 : pc.level >= 15 ? 4 : pc.level >= 10 ? 3 : pc.level >= 5 ? 2 : 1
+    const die = [6, 8, 10, 12, 20][tier - 1] ?? 6
+    return `d${die}${fmt(attackModVs(pc.classId, pc.level, foeCtx, party.length))}`
+  }
 
   if (!combat.active) {
     return (
@@ -88,7 +99,7 @@ export function CombatScreen() {
                 disabled={!foe}
                 onClick={() => foe && combat.attack(pc, foe.uid)}
               >
-                {d.attackRoll}
+                {pcRoll(pc) ?? d.attackRoll}
               </button>
               {(pc.resources.spellSlots ?? 0) > 0 && pc.preparedSpells.length > 0 && foe && (
                 <button

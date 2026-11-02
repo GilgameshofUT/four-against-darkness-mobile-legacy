@@ -7,6 +7,7 @@ import {
   moraleCheck, neverTestsMorale, parseFoeLevel, parseFoeLife, resolveAttack, rollAttack, rollDefense,
 } from '../core/combat'
 import { rollReaction } from '../core/reactions'
+import { attackModVs, type FoeContext } from '../core/modifiers'
 import { derive, type PC } from './pc'
 import { useParty } from './party'
 import type { Environment } from './dungeon'
@@ -166,8 +167,14 @@ export const useCombat = create<CombatState>((set, get) => ({
         if (!foe) return null
         const d = derive(pc)
         const die = [6, 8, 10, 12, 20][d.tier - 1] ?? 6
-        // Casters add +L to spellcasting; otherwise the class attack bonus.
-        const mods = spell ? pc.level : d.attack
+        // Casters add +L to spellcasting; otherwise the real class+foe attack modifier.
+        const foeCtx: FoeContext = {
+          name: foe.name,
+          tags: foe.tags,
+          kind: foe.kind === 'vermin' || foe.kind === 'minion' ? 'minor' : 'major',
+          count: foe.remaining ?? 1,
+        }
+        const mods = spell ? pc.level : attackModVs(pc.classId, pc.level, foeCtx, useParty.getState().party.length)
         const out = rollAttack({ dieSides: die, modifiers: mods, rng })
         const hits = resolveAttack(out.attackTotal, foe.level, foe.kind === 'vermin' || foe.kind === 'minion' ? 'minor' : 'major')
         const minor = foe.kind === 'vermin' || foe.kind === 'minion'
