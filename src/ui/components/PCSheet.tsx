@@ -4,10 +4,25 @@ import { spells } from '../../data/spells'
 import {
   canCastSpellsNow,
   derive,
+  getClass,
+  maxLife,
   pcProvidesLight,
   type PC,
 } from '../../state/pc'
 import { useParty } from '../../state/party'
+import {
+  IconArcane,
+  IconCoin,
+  IconEye,
+  IconHeart,
+  IconLantern,
+  IconPotion,
+  IconPrayer,
+  IconRation,
+  IconShield,
+  IconSword,
+  IconTorch,
+} from './icons'
 
 const SECRETS_LIST = [
   'Weakness of a Foe (+2 Attack vs chosen Major Foe)',
@@ -19,12 +34,20 @@ const SECRETS_LIST = [
   'Terrifying Secret (auto-fail Foe Morale)',
 ]
 
+type PendingTargetedAction =
+  | { kind: 'cleric-heal'; label: string }
+  | { kind: 'cleric-blessing'; label: string }
+  | { kind: 'paladin-heal'; label: string }
+  | { kind: 'bandage'; label: string }
+
 export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
   const d = derive(pc)
   const partySt = useParty()
   const [confirmCut, setConfirmCut] = useState(false)
   const [showShop, setShowShop] = useState(false)
   const [showSpells, setShowSpells] = useState(false)
+  const [showAbilities, setShowAbilities] = useState(false)
+  const [targetPrompt, setTargetPrompt] = useState<PendingTargetedAction | null>(null)
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
 
   const schoolSpells = d.cls.magic?.school
@@ -40,7 +63,6 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
   const isTwoHanded = (mainItem?.hands ?? 1) === 2
   const spellCheck = d.cls.magic?.usesSpells ? canCastSpellsNow(pc) : { ok: true }
 
-  // Available items in PC's hands + backpack for equipping
   const allHeldAndCarried = Array.from(
     new Set([
       ...(pc.mainHand ? [pc.mainHand] : []),
@@ -63,35 +85,54 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
   const prevHero = idxInParty > 0 ? partySt.party[idxInParty - 1] : null
   const nextHero = idxInParty >= 0 && idxInParty < partySt.party.length - 1 ? partySt.party[idxInParty + 1] : null
 
+  const applyTargetedAction = (targetId: string) => {
+    if (!targetPrompt) return
+    if (targetPrompt.kind === 'cleric-heal') {
+      setStatusMsg(partySt.castHealingPrayer(pc.id, targetId).message)
+    } else if (targetPrompt.kind === 'cleric-blessing') {
+      setStatusMsg(partySt.castBlessingPrayer(pc.id, targetId).message)
+    } else if (targetPrompt.kind === 'paladin-heal') {
+      setStatusMsg(partySt.usePaladinHeal(pc.id, targetId, 1).message)
+    } else if (targetPrompt.kind === 'bandage') {
+      setStatusMsg(partySt.useBandage(targetId).message)
+    }
+    setTargetPrompt(null)
+  }
+
   return (
     <article className="pcsheet">
-      {/* 1. PLAY SHEET HEADER: Marching Order, Name, Class, Level, Light */}
+      {/* 1. PLAY SHEET HEADER */}
       <header className="pcsheet__head">
         <div>
           <div className="eyebrow" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span className="chip chip--amber" style={{ padding: '1px 6px', fontSize: '0.7rem' }}>
+            <span className="chip chip--amber" style={{ padding: '2px 7px', fontSize: '0.68rem' }}>
               #{pc.marchingOrder} {pc.marchingOrder <= 2 ? 'FRONT ROW' : 'REAR ROW'}
             </span>
             <span>
               {d.cls.name} · L{pc.level} · Tier {d.tier}
             </span>
             {hasLight && (
-              <span className="chip" style={{ background: '#4a3810', color: '#f8dca0', fontSize: '0.7rem' }}>
-                {pc.continualLight
-                  ? '✨ Continual Light'
-                  : pc.lanternOnHook
-                    ? '🕯️ Shield-Hook Lantern'
-                    : pc.kuklaHairLantern
-                      ? '🕯️ Hair Lantern'
-                      : pc.mainHand === 'torch' || pc.offHand === 'torch'
-                        ? `🔥 Torch (${pc.torchRoomsLeft} rm)`
-                        : '🕯️ Lantern'}
+              <span className="chip chip--on" style={{ padding: '2px 7px', fontSize: '0.68rem' }}>
+                {pc.mainHand === 'torch' || pc.offHand === 'torch' ? (
+                  <>
+                    <IconTorch size={13} /> Torch ({pc.torchRoomsLeft} rm)
+                  </>
+                ) : (
+                  <>
+                    <IconLantern size={13} />{' '}
+                    {pc.continualLight
+                      ? 'Continual Light'
+                      : pc.lanternOnHook
+                        ? 'Shield Lantern'
+                        : pc.kuklaHairLantern
+                          ? 'Hair Lantern'
+                          : 'Lantern'}
+                  </>
+                )}
               </span>
             )}
             {pc.status !== 'alive' && (
-              <span className="chip" style={{ background: '#5a1818', color: '#ffd0d0' }}>
-                {pc.status.toUpperCase()}
-              </span>
+              <span className="chip chip--blood">{pc.status.toUpperCase()}</span>
             )}
           </div>
           <h3 className="pcsheet__name">{pc.name}</h3>
@@ -123,27 +164,33 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
             }}
             aria-label={`Dismiss ${pc.name}`}
           >
-            {confirmCut ? 'Confirm?' : '×'}
+            {confirmCut ? 'Dismiss?' : 'Dismiss'}
           </button>
         </div>
       </header>
 
-      {/* 2. PLAY SHEET 9-ICON STAT GRID (Book p. 206) */}
+      {/* 2. PLAY SHEET 6-BOX STAT GRID */}
       <div className="pcsheet__stats">
         <div className="statbox">
-          <span className="statbox__k">⚔️ Attack</span>
+          <span className="statbox__k">
+            <IconSword size={13} /> Attack
+          </span>
           <span className="statbox__v">{d.attackRoll}</span>
-          <span className="eyebrow" style={{ fontSize: '0.65rem' }}>{d.weaponName}</span>
+          <span className="eyebrow" style={{ fontSize: '0.62rem' }}>{d.weaponName}</span>
         </div>
         <div className="statbox">
-          <span className="statbox__k">🛡️ Defense</span>
+          <span className="statbox__k">
+            <IconShield size={13} /> Defense
+          </span>
           <span className="statbox__v">{d.defenseRoll}</span>
-          <span className="eyebrow" style={{ fontSize: '0.65rem' }}>
-            {d.armorName}{pc.offHand === 'shield' ? ' + Shield' : pc.shieldOnBack ? ' (Shield on back)' : ''}
+          <span className="eyebrow" style={{ fontSize: '0.62rem' }}>
+            {d.armorName}{pc.offHand === 'shield' ? ' + Shield' : pc.shieldOnBack ? ' (Back Shield)' : ''}
           </span>
         </div>
         <div className="statbox">
-          <span className="statbox__k">❤️ Life</span>
+          <span className="statbox__k">
+            <IconHeart size={13} /> Life
+          </span>
           <span className="statbox__v">
             {pc.life}/{d.maxLife}
           </span>
@@ -153,7 +200,9 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
           </div>
         </div>
         <div className="statbox">
-          <span className="statbox__k">💰 Gold (gp)</span>
+          <span className="statbox__k">
+            <IconCoin size={13} /> Gold (gp)
+          </span>
           <span className="statbox__v">{pc.gold}</span>
           <div className="statbox__step">
             <button className="stepbtn" onClick={() => partySt.addGold(pc.id, -5)}>−5</button>
@@ -161,7 +210,9 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
           </div>
         </div>
         <div className="statbox">
-          <span className="statbox__k">👁️ Clues</span>
+          <span className="statbox__k">
+            <IconEye size={13} /> Clues
+          </span>
           <span className="statbox__v">{pc.clues}/3</span>
           <div className="statbox__step">
             <button className="stepbtn" onClick={() => partySt.addClue(pc.id)}>+1</button>
@@ -174,45 +225,46 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
                   setStatusMsg(res.message)
                 }}
               >
-                Secret!
+                Secret
               </button>
             )}
           </div>
         </div>
         <div className="statbox">
-          <span className="statbox__k">🍖 Rations / Madness</span>
+          <span className="statbox__k">
+            <IconRation size={13} /> Rations / Mad
+          </span>
           <span className="statbox__v">
-            {pc.foodRations} / {pc.madness}m
+            {pc.foodRations} / {pc.madness}
           </span>
           <div className="statbox__step">
             <button
               className="stepbtn"
-              title="Add 1 Food Ration"
               onClick={() => partySt.updateHero(pc.id, { foodRations: Math.min(10, pc.foodRations + 1) })}
             >
-              +Food
+              +1 Food
             </button>
           </div>
         </div>
       </div>
 
-      {/* 3. HANDS & WORN EQUIPMENT COMPARTMENT (Book p. 110 & p. 206) */}
+      {/* 3. HANDS & WORN EQUIPMENT COMPARTMENT */}
       <div className="pcsheet__sec">
-        <div className="eyebrow" style={{ marginBottom: 4 }}>
+        <div className="eyebrow" style={{ marginBottom: 6 }}>
           Hands & Worn Equipment (2 Hands Limit · Book p. 110)
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '0.75rem' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: '0.75rem' }}>
             <span className="eyebrow">Main Hand</span>
             <select
               value={pc.mainHand ?? ''}
               onChange={(e) => partySt.equipHand(pc.id, 'mainHand', e.target.value || null)}
               style={{
-                background: 'var(--ink-800)',
+                background: '#120e0a',
                 color: 'var(--parch-100)',
-                border: '1px solid var(--line)',
+                border: '1px solid rgba(180, 150, 100, 0.3)',
                 borderRadius: 4,
-                padding: '4px 6px',
+                padding: '6px 8px',
               }}
             >
               <option value="">Empty (Unarmed -2)</option>
@@ -227,19 +279,19 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
             </select>
           </label>
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '0.75rem' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: '0.75rem' }}>
             <span className="eyebrow">Off Hand</span>
             <select
               value={isTwoHanded ? '' : pc.offHand ?? ''}
               disabled={isTwoHanded}
               onChange={(e) => partySt.equipHand(pc.id, 'offHand', e.target.value || null)}
               style={{
-                background: 'var(--ink-800)',
+                background: '#120e0a',
                 color: 'var(--parch-100)',
-                border: '1px solid var(--line)',
+                border: '1px solid rgba(180, 150, 100, 0.3)',
                 borderRadius: 4,
-                padding: '4px 6px',
-                opacity: isTwoHanded ? 0.6 : 1,
+                padding: '6px 8px',
+                opacity: isTwoHanded ? 0.55 : 1,
               }}
             >
               <option value="">
@@ -257,52 +309,108 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
           </label>
         </div>
 
-        {/* Shield on Back / Lantern Hook / Healing quick actions */}
-        <div className="chiprow" style={{ marginTop: 6 }}>
+        {/* Shield on Back / Lantern Hook / Targeted Healing Actions */}
+        <div className="chiprow" style={{ marginTop: 8 }}>
           {(pc.offHand === 'shield' || pc.shieldOnBack) && (
             <button className="chip" onClick={() => partySt.toggleShieldBack(pc.id)}>
-              {pc.shieldOnBack ? '🛡️ Ready Shield to Hand' : '🎒 Strap Shield to Back (Free Hand)'}
+              <IconShield size={13} />
+              {pc.shieldOnBack ? 'Ready Shield to Hand' : 'Strap Shield to Back (Free Hand)'}
             </button>
           )}
           {pc.offHand === 'shield' && (pc.inventory.includes('lantern') || pc.lanternOnHook) && (
             <button className="chip" onClick={() => partySt.toggleLanternHook(pc.id)}>
-              {pc.lanternOnHook ? 'Unhook Lantern' : '🪝 Hang Lantern on Shield'}
+              <IconLantern size={13} />
+              {pc.lanternOnHook ? 'Unhook Lantern' : 'Hang Lantern on Shield'}
             </button>
           )}
-          {!pc.bandageUsed && pc.life < d.maxLife && (
+          {pc.inventory.includes('bandage') && (
             <button
               className="chip chip--amber"
-              onClick={() => setStatusMsg(partySt.useBandage(pc.id).message)}
+              onClick={() =>
+                setTargetPrompt({
+                  kind: 'bandage',
+                  label: 'Choose an ally to Bandage (+1 Life, 1/Adv)',
+                })
+              }
             >
-              🩹 Use Bandage (+1 Life)
+              <IconHeart size={13} /> Apply Bandage (+1 Life)
             </button>
           )}
           {pc.classId === 'cleric' && (pc.resources.healing ?? 0) > 0 && (
             <button
               className="chip chip--amber"
-              onClick={() => setStatusMsg(partySt.castHealingPrayer(pc.id, pc.id).message)}
+              onClick={() =>
+                setTargetPrompt({
+                  kind: 'cleric-heal',
+                  label: `Choose target for ${pc.name}'s Healing Prayer (d6+${pc.level} Life)`,
+                })
+              }
             >
-              🙏 Heal Self (d6+{pc.level}, {pc.resources.healing} left)
+              <IconPrayer size={13} /> Healing Prayer (d6+{pc.level} · {pc.resources.healing} left)
             </button>
           )}
-          {pc.classId === 'paladin' && (pc.resources.prayer ?? 0) > 0 && pc.life < d.maxLife && (
+          {pc.classId === 'cleric' && (pc.resources.blessing ?? 0) > 0 && (
             <button
               className="chip chip--amber"
-              onClick={() => setStatusMsg(partySt.usePaladinHeal(pc.id, pc.id, 1).message)}
+              onClick={() =>
+                setTargetPrompt({
+                  kind: 'cleric-blessing',
+                  label: `Choose target for ${pc.name}'s Blessing Prayer`,
+                })
+              }
             >
-              ✨ Lay on Hands (+1 Life, {pc.resources.prayer} left)
+              <IconPrayer size={13} /> Blessing Prayer ({pc.resources.blessing} left)
+            </button>
+          )}
+          {pc.classId === 'paladin' && (pc.resources.prayer ?? 0) > 0 && (
+            <button
+              className="chip chip--amber"
+              onClick={() =>
+                setTargetPrompt({
+                  kind: 'paladin-heal',
+                  label: `Choose target for ${pc.name}'s Lay on Hands (+1 Life)`,
+                })
+              }
+            >
+              <IconPrayer size={13} /> Lay on Hands (+1 Life · {pc.resources.prayer} left)
             </button>
           )}
         </div>
 
+        {/* TARGET PICKER TRAY FOR HEALING / BLESSING / BANDAGES */}
+        {targetPrompt && (
+          <div className="target-tray" style={{ marginTop: 8 }}>
+            <div className="eyebrow" style={{ color: 'var(--amber-200)', marginBottom: 6 }}>
+              {targetPrompt.label}
+            </div>
+            <div className="chiprow">
+              {partySt.party.map((ally) => {
+                const cap = maxLife(getClass(ally.classId), ally.level, ally.traits)
+                return (
+                  <button
+                    key={ally.id}
+                    className="chip chip--on"
+                    onClick={() => applyTargetedAction(ally.id)}
+                  >
+                    #{ally.marchingOrder} {ally.name} ({ally.life}/{cap} HP)
+                  </button>
+                )
+              })}
+              <button className="chip" onClick={() => setTargetPrompt(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {!spellCheck.ok && (
-          <div style={{ color: 'var(--blood-300)', fontSize: '0.75rem', marginTop: 4 }}>
-            ⚠️ {spellCheck.reason}
+          <div style={{ color: 'var(--blood-300)', fontSize: '0.75rem', marginTop: 6 }}>
+            {spellCheck.reason}
           </div>
         )}
       </div>
 
-      {/* 4. CLASS RESOURCES (Tricks, Luck, Rage, Gadgets, Prayers, Panache, Spores) */}
+      {/* 4. CLASS RESOURCES */}
       {Object.keys(pc.resources).length > 0 && (
         <div className="pcsheet__pools">
           {Object.entries(pc.resources).map(([k, v]) => (
@@ -316,14 +424,21 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
         </div>
       )}
 
-      {/* 5. TRAITS & SPECIALIZATIONS */}
+      {/* 5. TRAITS & CLASS SKILLS */}
       <div className="pcsheet__sec">
-        <div className="eyebrow">
-          Trait{pc.classId === 'halfling' ? 's (Halflings choose 2)' : ''}
-          {pc.swornEnemy ? ` · Sworn Enemy: ${pc.swornEnemy}` : ''}
-          {pc.specialistSpell ? ` · Specialist: ${pc.specialistSpell}` : ''}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span className="eyebrow">
+            Trait{pc.classId === 'halfling' ? 's (Pick 2)' : ''}
+            {pc.swornEnemy ? ` · Sworn Enemy: ${pc.swornEnemy}` : ''}
+            {pc.specialistSpell ? ` · Specialist: ${pc.specialistSpell}` : ''}
+          </span>
+          {d.cls.abilities.length > 0 && (
+            <button className="chip" onClick={() => setShowAbilities((v) => !v)}>
+              {showAbilities ? 'Hide Class Skills' : `Class Skills (${d.cls.abilities.length})`}
+            </button>
+          )}
         </div>
-        <div className="chiprow">
+        <div className="chiprow" style={{ marginTop: 6 }}>
           {d.cls.traits.map((t) => {
             const on = pc.traits.includes(t.name)
             const max = pc.classId === 'halfling' ? 2 : 1
@@ -342,14 +457,24 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
         {pc.traits.map((tName) => {
           const tObj = d.cls.traits.find((x) => x.name === tName)
           return tObj ? (
-            <div key={tName} style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: 4 }}>
-              <b>{tObj.name}:</b> {tObj.text}
+            <div key={tName} style={{ fontSize: '0.75rem', color: 'var(--parch-200)', marginTop: 6 }}>
+              <b style={{ color: 'var(--amber-200)' }}>{tObj.name}:</b> {tObj.text}
             </div>
           ) : null
         })}
+
+        {showAbilities && (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(180,150,100,0.18)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {d.cls.abilities.map((ab) => (
+              <div key={ab.name} style={{ fontSize: '0.74rem', color: 'var(--parch-300)' }}>
+                <b style={{ color: 'var(--amber-200)' }}>{ab.name}:</b> {ab.text}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* 6. PREPARED SPELLS (Wizard, Elf, Druid, Illusionist, Gnome) */}
+      {/* 6. PREPARED SPELLS */}
       {schoolSpells.length > 0 && d.slots > 0 && (
         <div className="pcsheet__sec">
           <div className="eyebrow" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -357,15 +482,15 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
               Prepared Spells ({pc.preparedSpells.length}/{d.slots} slots ready)
             </span>
             <button className="chip" onClick={() => setShowSpells((v) => !v)}>
-              {showSpells ? 'Hide Spellbook' : 'Prepare Spells'}
+              <IconArcane size={13} /> {showSpells ? 'Close Grimoire' : 'Prepare Spells'}
             </button>
           </div>
-          <div className="chiprow" style={{ marginTop: 4 }}>
+          <div className="chiprow" style={{ marginTop: 6 }}>
             {pc.preparedSpells.map((sid, idx) => {
               const sp = spells.find((s) => s.id === sid)
               return (
                 <span key={`${sid}-${idx}`} className="chip chip--amber" title={sp?.text}>
-                  ✡️ {sp?.name ?? sid}
+                  <IconArcane size={12} /> {sp?.name ?? sid}
                 </span>
               )
             })}
@@ -373,20 +498,19 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
               const sp = spells.find((s) => s.id === sid)
               return (
                 <span key={`spent-${sid}-${idx}`} className="chip" style={{ opacity: 0.5 }}>
-                  (Spent: {sp?.name ?? sid})
+                  Spent: {sp?.name ?? sid}
                 </span>
               )
             })}
           </div>
           {showSpells && (
-            <div className="chiprow" style={{ marginTop: 6 }}>
+            <div className="chiprow" style={{ marginTop: 8 }}>
               {schoolSpells.map((sp) => (
                 <button
                   key={sp.id}
                   className="chip"
                   onClick={() => {
                     if (pc.classId === 'gnome') {
-                      // Gnomes fill all L slots with the same chosen Illusionist spell (Book p. 36)
                       partySt.setPreparedSpells(
                         pc.id,
                         Array.from({ length: d.slots }, () => sp.id),
@@ -410,11 +534,9 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
       {/* 7. BACKPACK & OUTFITTING SHOP */}
       <div className="pcsheet__sec">
         <div className="eyebrow" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>
-            Backpack & Provisions ({pc.inventory.length} items)
-          </span>
+          <span>Backpack & Provisions ({pc.inventory.length} items)</span>
           <button className="chip chip--amber" onClick={() => setShowShop((v) => !v)}>
-            {showShop ? 'Close Shop' : '🛒 Buy Gear'}
+            <IconCoin size={13} /> {showShop ? 'Close Quartermaster' : 'Buy Equipment'}
           </button>
         </div>
         <div style={{ fontSize: '0.78rem', color: 'var(--parch-200)', marginTop: 4 }}>
@@ -466,8 +588,8 @@ export function PCSheet({ pc, onRemove }: { pc: PC; onRemove: () => void }) {
           </div>
         )}
         {statusMsg && (
-          <div style={{ fontSize: '0.75rem', color: 'var(--amber-300)', marginTop: 6 }}>
-            {statusMsg}
+          <div style={{ fontSize: '0.76rem', color: 'var(--amber-200)', marginTop: 6 }}>
+            <IconPotion size={13} /> {statusMsg}
           </div>
         )}
       </div>

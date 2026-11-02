@@ -44,6 +44,8 @@ export interface PendingEncounterInfo {
 
 interface DungeonState {
   tiles: PlacedTile[]
+  /** Pre-calculated dungeon rooms waiting in Fog of War to be revealed door-by-door. */
+  hiddenTiles: PlacedTile[]
   currentId: string | null
   environment: Environment
   majorFoesMet: number
@@ -142,10 +144,85 @@ function tickPartyTorches() {
   }
 }
 
+/**
+ * Pre-calculate a connected dungeon complex of ~14 rooms & corridors around `entrance`,
+ * stocked per the 4AD 2d6 Tile Content Table, waiting in Fog of War to be revealed step-by-step.
+ */
+function buildPrecalculatedDungeon(entrance: PlacedTile, env: Environment): PlacedTile[] {
+  const hidden: PlacedTile[] = []
+  const allPlaced: PlacedTile[] = [entrance]
+  const occ = occupiedSet(allPlaced)
+
+  // Frontier of open doors to expand from
+  const frontier: Array<{ fromTileId: string; door: DoorRef }> = entrance.doors.map((d) => ({
+    fromTileId: entrance.id,
+    door: d,
+  }))
+
+  const multiDoorSpecs = D66_TILES.filter((s) => parseTile(s).doors.length >= 2)
+  const targetCount = 14
+
+  while (hidden.length < targetCount && frontier.length > 0) {
+    const nextEdge = frontier.shift()!
+    const { door } = nextEdge
+    const target = {
+      y: door.y + delta(door.dir)[0],
+      x: door.x + delta(door.dir)[1],
+      dir: door.dir,
+    }
+    if (occ.has(cellKey(target.y, target.x))) continue
+
+    const pool = hidden.length < 10 ? multiDoorSpecs : D66_TILES
+    const shuffled = [...pool].sort(() => Math.random() - 0.5)
+    let chosenSpec: TileSpec | null = null
+    let placed: ReturnType<typeof tryPlace> = null
+    for (const cand of shuffled) {
+      const p = tryPlace(cand, target, occ)
+      if (p) {
+        chosenSpec = cand
+        placed = p
+        break
+      }
+    }
+    if (!chosenSpec || !placed) continue
+
+    const d2d6 = rollDie(Math.random, 6) + rollDie(Math.random, 6)
+    const content = resolveTileContent(d2d6, chosenSpec.corridor)
+    const id = newId()
+    const newTile: PlacedTile = {
+      id,
+      specKey: chosenSpec.key,
+      corridor: chosenSpec.corridor,
+      rotation: placed.rotation,
+      environment: env,
+      content,
+      contentRoll2d6: d2d6,
+      searched: false,
+      floors: placed.floors,
+      doors: placed.doors.map((d) => ({
+        ...d,
+        connectedTo: null, // connected dynamically when the player opens the door
+      })),
+    }
+
+    for (const [fy, fx] of newTile.floors) occ.add(cellKey(fy, fx))
+    hidden.push(newTile)
+    allPlaced.push(newTile)
+
+    for (const d of newTile.doors) {
+      if (d.y === placed.door.y && d.x === placed.door.x) continue
+      frontier.push({ fromTileId: id, door: d })
+    }
+  }
+
+  return hidden
+}
+
 export const useDungeon = create<DungeonState>()(
   persist(
     (set, get) => ({
       tiles: [],
+      hiddenTiles: [],
       currentId: null,
       environment: 'dungeon',
       majorFoesMet: 0,
@@ -158,6 +235,7 @@ export const useDungeon = create<DungeonState>()(
       lastMessage: null,
 
       start: () => {
+        const env = get().environment
         const spec = STARTING_TILES[rollDie(Math.random, STARTING_TILES.length) - 1]!
         const parsed = parseTile(spec)
         const tile: PlacedTile = {
@@ -165,14 +243,16 @@ export const useDungeon = create<DungeonState>()(
           specKey: spec.key,
           corridor: spec.corridor,
           rotation: 0,
-          environment: get().environment,
+          environment: env,
           content: { kind: 'empty' }, // first room has no content (p.104)
           searched: false,
           floors: parsed.floors.map(([y, x]) => [y, x] as [number, number]),
           doors: parsed.doors.map((d) => ({ y: d.y, x: d.x, dir: d.dir, connectedTo: null })),
         }
+        const hiddenTiles = buildPrecalculatedDungeon(tile, env)
         set({
           tiles: [tile],
+          hiddenTiles,
           currentId: tile.id,
           started: true,
           majorFoesMet: 0,
@@ -191,7 +271,7 @@ export const useDungeon = create<DungeonState>()(
         get().tiles.find((t) => t.id === tileId)?.doors.filter((d) => d.connectedTo) ?? [],
 
       chooseDoor: (tileId, y, x) => {
-        const { tiles, environment, majorFoesMet, finalBossMet } = get()
+        const { tiles, hiddenTiles, environment, majorFoesMet, finalBossMet } = get()
         const tile = tiles.find((t) => t.id === tileId)
         if (!tile) return
         const door = tile.doors.find((d) => d.y === y && d.x === x)
@@ -220,44 +300,133 @@ export const useDungeon = create<DungeonState>()(
         }
 
         // --- Expand into the dark through an open door ---
-        // Try up to 8 random d66 shapes so a cramped doorway still finds a fitting tile if possible
-        let spec = specFromD66()
         const target = {
           y: door.y + delta(door.dir)[0],
           x: door.x + delta(door.dir)[1],
           dir: door.dir,
         }
         const occ = occupiedSet(tiles)
-        let placed = tryPlace(spec, target, occ)
-        for (let retry = 0; !placed && retry < 8; retry++) {
-          spec = specFromD66()
-          placed = tryPlace(spec, target, occ)
-        }
-        if (!placed) {
-          set({ lastMessage: 'That passage ends in solid stone — choose another exit.' })
-          return
+
+        // If the cell immediately beyond the door is already part of an existing room,
+        // connect the two tiles into a dungeon loop and step into that room!
+        if (occ.has(cellKey(target.y, target.x))) {
+          const existing = tiles.find((t) =>
+            t.floors.some(([fy, fx]) => fy === target.y && fx === target.x),
+          )
+          if (existing && existing.id !== tile.id) {
+            tickPartyTorches()
+            const backDir = opposite(door.dir)
+            const nextTiles = tiles.map((t) => {
+              if (t.id === tile.id) {
+                return {
+                  ...t,
+                  doors: t.doors.map((d) =>
+                    d.y === y && d.x === x ? { ...d, connectedTo: existing.id } : d,
+                  ),
+                }
+              }
+              if (t.id === existing.id) {
+                const hasBack = t.doors.some((d) => d.y === target.y && d.x === target.x)
+                return {
+                  ...t,
+                  doors: hasBack
+                    ? t.doors.map((d) =>
+                        d.y === target.y && d.x === target.x ? { ...d, connectedTo: tile.id } : d,
+                      )
+                    : [...t.doors, { y: target.y, x: target.x, dir: backDir, connectedTo: tile.id }],
+                }
+              }
+              return t
+            })
+            set({
+              tiles: nextTiles,
+              currentId: existing.id,
+              lastMessage: 'This doorway opens into a chamber you have already mapped!',
+            })
+            return
+          }
         }
 
-        tickPartyTorches()
-        const d2d6 = rollDie(Math.random, 6) + rollDie(Math.random, 6)
-        const content = resolveTileContent(d2d6, spec.corridor)
-        const id = newId()
-        const newTile: PlacedTile = {
-          id,
-          specKey: spec.key,
-          corridor: spec.corridor,
-          rotation: placed.rotation,
-          environment,
-          content,
-          contentRoll2d6: d2d6,
-          searched: false,
-          floors: placed.floors,
-          doors: placed.doors.map((d) => ({
-            ...d,
-            connectedTo: d.y === placed.door.y && d.x === placed.door.x ? tile.id : null,
-          })),
+        // 1. Check if a pre-calculated room in `hiddenTiles` sits behind this doorway!
+        const prebuilt = hiddenTiles.find(
+          (ht) =>
+            ht.doors.some(
+              (hd) =>
+                hd.y === target.y &&
+                hd.x === target.x &&
+                opposite(hd.dir) === target.dir,
+            ) && ht.floors.every(([fy, fx]) => !occ.has(cellKey(fy, fx))),
+        )
+
+        let newTile: PlacedTile
+        let nextHidden = hiddenTiles
+
+        if (prebuilt) {
+          tickPartyTorches()
+          newTile = {
+            ...prebuilt,
+            environment,
+            doors: prebuilt.doors.map((d) => ({
+              ...d,
+              connectedTo:
+                d.y === target.y && d.x === target.x && opposite(d.dir) === target.dir
+                  ? tile.id
+                  : null,
+            })),
+          }
+          nextHidden = hiddenTiles.filter((ht) => ht.id !== prebuilt.id)
+        } else {
+          // 2. Fallback: place a fitting shape from D66_TILES
+          const firstSpec = specFromD66()
+          const candidates = [
+            firstSpec,
+            ...D66_TILES.filter((s) => s.key !== firstSpec.key).sort((a, b) => {
+              if (tiles.length < 8) {
+                const aMulti = parseTile(a).doors.length >= 2 ? 0 : 1
+                const bMulti = parseTile(b).doors.length >= 2 ? 0 : 1
+                if (aMulti !== bMulti) return aMulti - bMulti
+              }
+              return Math.random() - 0.5
+            }),
+          ]
+
+          let spec = firstSpec
+          let placed: ReturnType<typeof tryPlace> = null
+          for (const cand of candidates) {
+            placed = tryPlace(cand, target, occ)
+            if (placed) {
+              spec = cand
+              break
+            }
+          }
+          if (!placed) {
+            set({ lastMessage: 'That passage ends in solid stone — choose another exit.' })
+            return
+          }
+
+          tickPartyTorches()
+          const d2d6 = rollDie(Math.random, 6) + rollDie(Math.random, 6)
+          const content = resolveTileContent(d2d6, spec.corridor)
+          const id = newId()
+          newTile = {
+            id,
+            specKey: spec.key,
+            corridor: spec.corridor,
+            rotation: placed.rotation,
+            environment,
+            content,
+            contentRoll2d6: d2d6,
+            searched: false,
+            floors: placed.floors,
+            doors: placed.doors.map((d) => ({
+              ...d,
+              connectedTo: d.y === placed.door.y && d.x === placed.door.x ? tile.id : null,
+            })),
+          }
         }
 
+        const id = newTile.id
+        const content = newTile.content
         const nextTiles = tiles
           .map((t) =>
             t.id === tile.id
@@ -296,7 +465,7 @@ export const useDungeon = create<DungeonState>()(
           pending = {
             foeKind,
             tileId: id,
-            inCorridor: spec.corridor,
+            inCorridor: newTile.corridor,
             isFinalBoss,
             ...(bossRollInfo ? { bossRollInfo } : {}),
           }
@@ -304,6 +473,7 @@ export const useDungeon = create<DungeonState>()(
 
         set({
           tiles: nextTiles,
+          hiddenTiles: nextHidden,
           currentId: id,
           majorFoesMet: nextMajorMet,
           finalBossMet: nextFinalBossMet,
@@ -364,6 +534,7 @@ export const useDungeon = create<DungeonState>()(
       reset: () =>
         set({
           tiles: [],
+          hiddenTiles: [],
           currentId: null,
           started: false,
           majorFoesMet: 0,
@@ -387,6 +558,7 @@ export const useDungeon = create<DungeonState>()(
         if (malformed) {
           return {
             tiles: [],
+            hiddenTiles: [],
             currentId: null,
             environment: 'dungeon',
             majorFoesMet: 0,
@@ -401,6 +573,7 @@ export const useDungeon = create<DungeonState>()(
         }
         return {
           ...p,
+          hiddenTiles: Array.isArray(p.hiddenTiles) ? p.hiddenTiles : [],
           finalBossMet: Boolean(p.finalBossMet),
           finalBossSlain: Boolean(p.finalBossSlain),
           escapedAlive: Boolean(p.escapedAlive),

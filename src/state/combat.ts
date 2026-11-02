@@ -40,17 +40,14 @@ export interface FoeInstance {
   kind: FoeKind
   level: number
   baseLevel: number
-  /** Minor groups: how many remain (and started). */
   remaining?: number
   initial?: number
-  /** Major foes: current/max life. */
   life?: number
   maxLife?: number
-  /** True once Major Foe has dropped below 50% Life (-1 L applied, Book p. 94). */
   woundedPenaltyApplied?: boolean
-  /** True if this Major Foe is the dungeon's Final Boss (Book p. 105). */
   isFinalBoss?: boolean
   attacks: number
+  skipNextAttacks?: number
   damage: string
   treasure: string
   morale: string
@@ -73,11 +70,32 @@ export interface AttackResult {
   note: string
 }
 
+export interface PendingDefense {
+  id: string
+  foeUid: string
+  foeName: string
+  foeLevel: number
+  damage: number
+  targetPcId: string
+  firstOfCombat: boolean
+  resolved: boolean
+  rolled?: number
+  rolls?: number[]
+  total?: number
+  mod?: number
+  exploded?: boolean
+  rolledOne?: boolean
+  success?: boolean
+  damageTaken?: number
+  damageReduced?: boolean
+  counterUsed?: boolean
+}
+
 export interface BeginCombatOptions {
   inCorridor?: boolean
   wandering?: boolean
   isFinalBoss?: boolean
-   bossRollInfo?: string
+  bossRollInfo?: string
 }
 
 interface CombatState {
@@ -93,57 +111,80 @@ interface CombatState {
   foes: FoeInstance[]
   round: number
   log: string[]
-  /** Set once a PC has acted this round. */
+  /** Set once a PC has used their primary action this round. */
   pcsActed: Set<string>
+  /** Set once a dual-wielder / monk has used their bonus off-hand / flurry attack this round. */
+  pcsBonusActed: Set<string>
+  /** Interactive queue of incoming enemy attacks during Foes' turn. */
+  pendingDefenses: PendingDefense[]
   lastAttack: AttackResult | null
   lastFoeTurn: string[] | null
   lootReady: boolean
 
   begin: (foeKind: FoeKind, env: Environment, hclValue: number, opts?: BeginCombatOptions) => void
-  /** Pre-combat approach choices (Book pp. 79, 90, 101, 146). */
   chooseAttackImmediately: () => void
   chooseWaitForReaction: (hclValue: number) => void
   chooseAttemptStealth: (mode: 'sneak-past' | 'ambush') => { ok: boolean; message: string }
   useDwarfGoldSense: (dwarfId: string) => { ok: boolean; message: string }
-  /** Interactive reaction resolutions (Bribe, Blood Offering, Puzzle, Magic Challenge, Pass). */
+
   payBribe: (amountGp?: number, foodCount?: number) => { ok: boolean; message: string }
   payBloodOffering: (pcId: string) => { ok: boolean; message: string }
   attemptPuzzleReaction: (pcId: string) => { ok: boolean; message: string }
   attemptMagicChallenge: (pcId: string) => { ok: boolean; message: string }
   acceptPeacefulPass: () => void
 
-  /** Check whether a PC can make a melee attack in the current tile/marching order (Book p. 95). */
   canPcMelee: (pc: PC) => { ok: boolean; reason?: string }
-  /** Standard orRage/Smite attack. */
   attack: (
     pc: PC,
     foeUid: string,
     rng?: Rng,
     spell?: boolean,
-    opts?: { rage?: boolean; smite?: boolean; subdual?: boolean },
+    opts?: { rage?: boolean; smite?: boolean; subdual?: boolean; isBonusAttack?: boolean; bonusMod?: number },
   ) => AttackResult | null
-  /** Cast a specific prepared spell (or default first slot). */
-  castSpell: (pc: PC, foeUid: string, rng?: Rng, spellId?: string) => AttackResult | null
-  /** Use class active ability in combat (Acrobat Trick, Gnome Gadget, Illusionist Lights, Monk Spores, Holy Water). */
+  castSpell: (pc: PC, foeUid: string, rng?: Rng, spellId?: string, targetPcId?: string) => AttackResult | null
   useCombatAbility: (
     pc: PC,
     ability:
       | 'distract'
+      | 'distracting-feint'
       | 'distracting-lights'
+      | 'illusionary-knife'
       | 'spores'
       | 'gadget-weapon'
       | 'grenade'
+      | 'clockwork-armor'
       | 'smokescreen'
       | 'holy-water'
       | 'panache-atk'
-      | 'panache-def',
+      | 'panache-def'
+      | 'taunt'
+      | 'hide-in-shadows'
+      | 'bladesong'
+      | 'elidra-melody'
+      | 'chant-of-valor'
+      | 'rootbind'
+      | 'hair-bind'
+      | 'hidden-blade'
+      | 'parry-stance'
+      | 'quick-feint'
+      | 'team-tactics'
+      | 'berserk-fighting',
     foeUid?: string,
+    targetPcId?: string,
   ) => { ok: boolean; message: string }
-  /** Spend 1 Halfling Luck point to reroll the last missed attack or flee safely (Book p. 40). */
   spendHalflingLuck: (halflingId: string, mode: 'reroll-attack' | 'flee', foeUid?: string) => { ok: boolean; message: string }
-  /** Withdraw (+1 Defense, requires door) or Flee (Book pp. 97–98). */
   withdrawOrFlee: (mode: 'withdraw' | 'flee', hclValue: number) => { ok: boolean; message: string }
 
+  /** Interactive Defense Queue methods (Book pp. 96–97). */
+  beginFoeTurnQueue: (hclValue: number) => void
+  reassignDefenseTarget: (defId: string, newTargetPcId: string) => void
+  rollSingleDefense: (defId: string, rng?: Rng) => void
+  rerollFailedDefense: (defId: string, source: 'luck' | 'stubborn-resolve' | 'lucky-hat') => { ok: boolean; message: string }
+  reduceDefenseDamage: (defId: string, traitName: string) => { ok: boolean; message: string }
+  triggerCounterAttack: (defId: string, pc: PC) => { ok: boolean; message: string }
+  finishFoeTurnQueue: () => void
+
+  /** Synchronous full-turn helper (kept for automated tests & "Auto-Roll All"). */
   foeTurn: (hclValue: number, rng?: Rng) => string[]
   tryMorale: (foeUid: string, rng?: Rng) => 'flee' | 'fight' | 'never'
   markLoot: () => void
@@ -152,6 +193,8 @@ interface CombatState {
 
 let u = 0
 const uid = () => `foe-${u++}`
+let dSeq = 0
+const defUid = () => `def-${dSeq++}`
 
 function parseMoraleMod(morale: string): number {
   const m = /^([+-]\d+)$/.exec(morale.trim())
@@ -178,7 +221,6 @@ function parseAttackDamage(dmg: string | undefined, tierValue: number): number {
   return 1
 }
 
-/** Pick a Foe from a d6 table entry (choosing among foes if the row is a choice). */
 function pickFoe(tableId: string, rng: Rng): Foe | null {
   const table = foeTables.find((t) => t.id === tableId)
   if (!table) return null
@@ -188,7 +230,6 @@ function pickFoe(tableId: string, rng: Rng): Foe | null {
   return entry.foes[rollDie(rng, entry.foes.length) - 1] ?? entry.foes[0]!
 }
 
-/** CheckMajor Foe < 50% Life rule (Book p. 94: reduce L by 1 when more than half Life is lost). */
 function applyWoundedAndCountUpdate(foe: FoeInstance, slainDelta: number, damageDelta: number): FoeInstance {
   const minor = foe.kind === 'vermin' || foe.kind === 'minion'
   if (minor) {
@@ -223,6 +264,8 @@ export const useCombat = create<CombatState>((set, get) => ({
   round: 0,
   log: [],
   pcsActed: new Set<string>(),
+  pcsBonusActed: new Set<string>(),
+  pendingDefenses: [],
   lastAttack: null,
   lastFoeTurn: null,
   lootReady: false,
@@ -231,7 +274,6 @@ export const useCombat = create<CombatState>((set, get) => ({
     const rng = defaultRng
     const tableId = foeKind === 'minion' ? `${env}-minions` : `${env}-${foeKind}`
     let f = pickFoe(tableId, rng)
-    // Invisible Gremlins are an event; if rolled in combat or as wandering, pick another foe if needed
     if (f && f.kind === 'event') {
       f = foeTables.find((t) => t.id === tableId)?.entries[0]?.foes[0] ?? f
     }
@@ -271,7 +313,19 @@ export const useCombat = create<CombatState>((set, get) => ({
       inst.maxLife = life
     }
 
-    // Check surprise (Wandering Monsters always surprise unless Track Master / Keen Nose; or X-in-6 in text)
+    // Clear per-combat used traits on party
+    const partySt = useParty.getState()
+    for (const p of partySt.party) {
+      if (p.usedTraitsCombat.length > 0 || p.activeEffects.length > 0) {
+        partySt.updateHero(p.id, {
+          usedTraitsCombat: [],
+          activeEffects: p.activeEffects.filter(
+            (e) => e === 'blessed-temple' || e === 'cursed-altar' || e === 'bear-trap' || e === 'envenomed-weapon',
+          ),
+        })
+      }
+    }
+
     let surprised = Boolean(opts.wandering)
     const surpriseMatch = /(\d+)-in-6 chance of surpris/i.exec(f.text ?? '')
     if (!surprised && surpriseMatch) {
@@ -308,10 +362,16 @@ export const useCombat = create<CombatState>((set, get) => ({
       round: 1,
       log: initialLog,
       pcsActed: new Set(),
+      pcsBonusActed: new Set(),
+      pendingDefenses: [],
       lastAttack: null,
       lastFoeTurn: null,
       lootReady: false,
     })
+
+    if (surprised && !isFinalBoss) {
+      get().beginFoeTurnQueue(hclValue)
+    }
   },
 
   chooseAttackImmediately: () => {
@@ -321,7 +381,7 @@ export const useCombat = create<CombatState>((set, get) => ({
     }))
   },
 
-  chooseWaitForReaction: (_hclValue) => {
+  chooseWaitForReaction: (hclValue) => {
     const st = get()
     const foe = st.foes[0]
     if (!foe) return
@@ -342,6 +402,7 @@ export const useCombat = create<CombatState>((set, get) => ({
         phase: 'foe-turn',
         log: [...st.log, `Reaction: ${foe.reactionLabel} — not outnumbered, so ${foe.name} attacks first!`],
       })
+      get().beginFoeTurnQueue(hclValue)
       return
     }
 
@@ -383,11 +444,11 @@ export const useCombat = create<CombatState>((set, get) => ({
       return
     }
 
-    // Fight or Fight to the death -> Foes attack first (Book p. 90 & p. 146)
     set({
       phase: 'foe-turn',
       log: [...st.log, `Reaction: ${foe.reactionLabel} — ${foe.name} attacks first!`],
     })
+    get().beginFoeTurnQueue(hclValue)
   },
 
   chooseAttemptStealth: (mode) => {
@@ -400,7 +461,6 @@ export const useCombat = create<CombatState>((set, get) => ({
     const party = useParty.getState().party.filter((p) => p.status === 'alive')
     if (party.length === 0) return { ok: false, message: 'No living PCs.' }
     const hasLight = partyHasLight(party)
-    // Group Stealth uses the WORST modifier in the party (Book p. 78)
     const worstMod = Math.min(...party.map((p) => stealthSaveMod(p, !hasLight)))
     const roll = rollExploding(defaultRng, 6)
     const total = roll.total + worstMod
@@ -414,6 +474,7 @@ export const useCombat = create<CombatState>((set, get) => ({
           `Stealth Save failed (rolled ${total} [worst mod ${worstMod >= 0 ? `+${worstMod}` : worstMod}] vs L${foe.level})! ${foe.name} spots you and attacks first!`,
         ],
       })
+      get().beginFoeTurnQueue(Math.max(1, ...party.map((p) => p.level)))
       return { ok: false, message: `Stealth failed (${total} vs L${foe.level}) — Foes attack first!` }
     }
 
@@ -426,7 +487,6 @@ export const useCombat = create<CombatState>((set, get) => ({
       return { ok: true, message: `Slipped past ${foe.name} quietly!` }
     }
 
-    // Ambush: reduce Foe's L by 1 (min 1) on Turn 1 and PCs attack first (Book p. 79)
     set({
       phase: 'pc-turn',
       ambushBonus: true,
@@ -463,7 +523,6 @@ export const useCombat = create<CombatState>((set, get) => ({
     if (!foe) return { ok: false, message: 'No foe.' }
     const partySt = useParty.getState()
     const dwarves = partySt.party.filter((p) => p.classId === 'dwarf' && p.status === 'alive').length
-    // Book p. 30 Miser rule: A party with 2+ dwarves may NOT Bribe Foes!
     if (dwarves >= 2) {
       return { ok: false, message: 'Dwarf Miser Rule (Book p. 30): A party with 2+ Dwarves refuses to Bribe Foes!' }
     }
@@ -490,7 +549,6 @@ export const useCombat = create<CombatState>((set, get) => ({
       return { ok: true, message: `Bribed ${foe.name} with ${foodCount} Food Rations.` }
     }
 
-    // Parse gp amount from reactionLabel if not explicitly provided
     let cost = amountGp ?? 20
     const m = /(\d+)\s*gp/i.exec(foe.reactionLabel)
     if (!amountGp && m) {
@@ -554,6 +612,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       phase: 'foe-turn',
       log: [...st.log, `${pc.name} fails the riddle (${total} vs L${foe.level}) — ${foe.name} attacks first!`],
     })
+    get().beginFoeTurnQueue(pc.level)
     return { ok: false, message: `Puzzle failed (${total} vs L${foe.level}) — Foes attack!` }
   },
 
@@ -578,6 +637,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       phase: 'foe-turn',
       log: [...st.log, `${pc.name} loses the Magic Challenge (${total} vs L${foe.level}) — ${foe.name} attacks!`],
     })
+    get().beginFoeTurnQueue(pc.level)
     return { ok: false, message: `Magic Challenge lost — ${foe.name} attacks!` }
   },
 
@@ -595,8 +655,6 @@ export const useCombat = create<CombatState>((set, get) => ({
     if (pc.status !== 'alive') return { ok: false, reason: `${pc.name} is ${pc.status}.` }
     const st = get()
     if (!st.inCorridor) return { ok: true }
-    // Book p. 95 & p. 96: In corridors, only Positions 1 & 2 can fight in melee
-    // (or Positions 3 & 4 if ambushed from the rear by Wandering Monsters!).
     const aliveParty = useParty.getState().party.filter((p) => p.status === 'alive')
     if (aliveParty.length <= 2) return { ok: true }
     if (st.wandering) {
@@ -625,7 +683,17 @@ export const useCombat = create<CombatState>((set, get) => ({
     const aliveCount = party.filter((p) => p.status === 'alive').length || party.length
     const hasLight = partyHasLight(party)
     const d = derive(pc)
-    const die = [6, 8, 10, 12, 20][d.tier - 1] ?? 6
+
+    // Ranger Sworn Enemy die shift (Book p. 58: uses higher Tier die vs Sworn Enemy!)
+    let tierShift = 0
+    if (
+      pc.classId === 'ranger' &&
+      pc.swornEnemy &&
+      new RegExp(pc.swornEnemy.replace(/s$/i, ''), 'i').test(foe.name)
+    ) {
+      tierShift = 1
+    }
+    const die = [6, 8, 10, 12, 20][Math.min(4, d.tier - 1 + tierShift)] ?? 6
 
     const foeCtx: FoeContext = {
       name: foe.name,
@@ -634,8 +702,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       count: foe.remaining ?? 1,
     }
 
-    // Use full Attack modifier breakdown if PC has mainHand/traits, while keeping backward compatibility
-    const mods = spell
+    const baseMods = spell
       ? pc.level + (hasLight ? 0 : -2)
       : pc.mainHand !== undefined
         ? fullAttackModVs(pc, foeCtx, aliveCount, {
@@ -643,8 +710,8 @@ export const useCombat = create<CombatState>((set, get) => ({
             subdual: Boolean(opts.subdual),
           }).total
         : attackModVs(pc.classId, pc.level, foeCtx, aliveCount)
+    const mods = baseMods + (opts.bonusMod ?? 0)
 
-    // Barbarian Rage: roll 3 times and pick the best result; double damage on hit (Book p. 24)
     let out = rollAttack({ dieSides: die, modifiers: mods, rng })
     if (opts.rage && useParty.getState().spendResource(pc.id, 'rage', 1)) {
       const r2 = rollAttack({ dieSides: die, modifiers: mods, rng })
@@ -657,10 +724,13 @@ export const useCombat = create<CombatState>((set, get) => ({
     let hits = resolveAttack(out.attackTotal, foe.level, minor ? 'minor' : 'major')
     if (opts.rage && hits > 0) hits *= 2
     if (opts.smite && hits > 0 && useParty.getState().spendResource(pc.id, 'smite', 1)) {
-      hits = 3 // Book p. 55 Divine Smite: 3 damage to Major Foe or auto-kill 3 Minor Foes
+      hits = 3
+    }
+    if (pc.activeEffects.includes('berserk-fighting') && hits > 0) {
+      hits += 1
     }
     if (pc.activeEffects.includes('hide-in-shadows') && hits > 0) {
-      hits *= 3 // Book p. 22 Assassin Hide in Shadows: triple damage!
+      hits *= 3
       useParty.getState().updateHero(pc.id, {
         activeEffects: pc.activeEffects.filter((e) => e !== 'hide-in-shadows'),
       })
@@ -684,8 +754,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       }
     })
 
-    // Swashbuckler Panache: gain +1 Panache per foe killed, up to L (Book p. 61)
-    if (pc.classId === 'swashbuckler' && (slain > 0 || ( !minor && killed ))) {
+    if (pc.classId === 'swashbuckler' && (slain > 0 || (!minor && killed))) {
       const gained = minor ? slain : 1
       const curPanache = pc.resources.panache ?? 0
       useParty.getState().updateHero(pc.id, {
@@ -717,7 +786,10 @@ export const useCombat = create<CombatState>((set, get) => ({
       f.kind === 'vermin' || f.kind === 'minion' ? (f.remaining ?? 0) > 0 : (f.life ?? 0) > 0,
     )
     const acted = new Set(st.pcsActed)
-    acted.add(pc.id)
+    const bonusActed = new Set(st.pcsBonusActed)
+    if (opts.isBonusAttack) bonusActed.add(pc.id)
+    else acted.add(pc.id)
+
     const allDead = remainingFoes.length === 0
     if (allDead) {
       useParty
@@ -729,22 +801,22 @@ export const useCombat = create<CombatState>((set, get) => ({
       foes,
       phase: allDead ? 'victory' : 'pc-turn',
       pcsActed: acted,
+      pcsBonusActed: bonusActed,
       lastAttack: result,
       lootReady: allDead,
       log: [
         ...st.log,
-        `${pc.name}${spell ? ' casts' : ''}: ${note} (${out.attackTotal} vs L${foe.level})`,
+        `${pc.name}${opts.isBonusAttack ? ' (Off-Hand/Flurry)' : ''}${spell ? ' casts' : ''}: ${note} (rolled [${out.rolls.join('+')}] → ${out.attackTotal} vs L${foe.level})`,
       ],
     })
     return result
   },
 
-  castSpell: (pc, foeUid, rng = defaultRng, spellId) => {
+  castSpell: (pc, foeUid, rng = defaultRng, spellId, targetPcId) => {
     const st = get()
     const foe = st.foes.find((f) => f.uid === foeUid) ?? st.foes[0] ?? null
     const chosenSpell = spellId ?? pc.preparedSpells[0] ?? 'lightning'
 
-    // Validate free hand & Elf armor/shield restrictions if using prepared spells
     if (pc.preparedSpells.length > 0) {
       const check = canCastSpellsNow(pc)
       if (!check.ok) return null
@@ -784,8 +856,16 @@ export const useCombat = create<CombatState>((set, get) => ({
     const outcome = resolveSpellCast(pc, chosenSpell, spellTarget, { rng })
 
     if (outcome.buffApplied) {
-      useParty.getState().updateHero(pc.id, {
-        activeEffects: [...pc.activeEffects, outcome.buffApplied],
+      const recipientId = targetPcId ?? pc.id
+      const recipient = useParty.getState().party.find((p) => p.id === recipientId) ?? pc
+      useParty.getState().updateHero(recipient.id, {
+        activeEffects: [...recipient.activeEffects, outcome.buffApplied],
+        ...(outcome.buffApplied === 'blessing-cleanse'
+          ? {
+              status: recipient.status === 'petrified' || recipient.status === 'paralyzed' ? 'alive' : recipient.status,
+              madness: Math.max(0, recipient.madness - 1),
+            }
+          : {}),
       })
     }
     if (outcome.rationsCreated) {
@@ -854,7 +934,7 @@ export const useCombat = create<CombatState>((set, get) => ({
     return result
   },
 
-  useCombatAbility: (pc, ability, foeUid) => {
+  useCombatAbility: (pc, ability, foeUid, targetPcId) => {
     const st = get()
     const foe = st.foes.find((f) => f.uid === foeUid) ?? st.foes[0]
     const partySt = useParty.getState()
@@ -875,6 +955,29 @@ export const useCombat = create<CombatState>((set, get) => ({
         log: [...st.log, `${pc.name} performs Acrobat Trick: Distract — ${foe.name} is -${t} L!`],
       })
       return { ok: true, message: `${foe.name}'s Level reduced by ${t}!` }
+    }
+
+    if (ability === 'distracting-feint' || ability === 'elidra-melody' || ability === 'rootbind') {
+      if (!foe) return { ok: false, message: 'No target.' }
+      const acted = new Set(st.pcsActed)
+      acted.add(pc.id)
+      partySt.updateHero(pc.id, {
+        usedTraitsCombat: [...pc.usedTraitsCombat, ability],
+        usedTraitsAdventure: [...pc.usedTraitsAdventure, ability],
+      })
+      set({
+        pcsActed: acted,
+        foes: st.foes.map((f) =>
+          f.uid === foe.uid ? { ...f, skipNextAttacks: (f.skipNextAttacks ?? 0) + 1 } : f,
+        ),
+        log: [
+          ...st.log,
+          `${pc.name} uses ${
+            ability === 'rootbind' ? 'Rootbind' : ability === 'elidra-melody' ? "Elidra's Melody" : 'Distracting Feint'
+          } — ${foe.name} loses an attack on its next turn!`,
+        ],
+      })
+      return { ok: true, message: `${foe.name} will skip its next attack!` }
     }
 
     if (ability === 'distracting-lights') {
@@ -903,21 +1006,114 @@ export const useCombat = create<CombatState>((set, get) => ({
       return { ok: false, message: 'Distracting Lights failed.' }
     }
 
-    if (ability === 'spores') {
+    if (ability === 'illusionary-knife') {
       if (!foe) return { ok: false, message: 'No target.' }
-      if (!partySt.spendResource(pc.id, 'spores', 1)) {
+      if (!partySt.spendResource(pc.id, 'spellSlots', 1)) {
+        return { ok: false, message: 'Need 1 Spell Slot for Illusionary Knife Throw.' }
+      }
+      get().attack(pc, foe.uid, defaultRng, false, { bonusMod: pc.level + t + 1 })
+      return { ok: true, message: `${pc.name} hurls an Illusionary Knife (+L +Tier)!` }
+    }
+
+    if (ability === 'spores' || ability === 'taunt' || ability === 'quick-feint' || ability === 'hair-bind') {
+      if (!foe) return { ok: false, message: 'No target.' }
+      if (ability === 'spores' && !partySt.spendResource(pc.id, 'spores', 1)) {
         return { ok: false, message: 'No Spore charges left.' }
       }
+      const drop = ability === 'spores' ? 1 : ability === 'taunt' ? t : 2
       const acted = new Set(st.pcsActed)
       acted.add(pc.id)
+      partySt.updateHero(pc.id, {
+        usedTraitsCombat: [...pc.usedTraitsCombat, ability],
+        usedTraitsAdventure: [...pc.usedTraitsAdventure, ability],
+      })
       set({
         pcsActed: acted,
         foes: st.foes.map((f) =>
-          f.uid === foe.uid ? { ...f, level: Math.max(1, f.level - 1) } : f,
+          f.uid === foe.uid ? { ...f, level: Math.max(1, f.level - drop) } : f,
         ),
-        log: [...st.log, `${pc.name} sprays a cloud of Spores — ${foe.name} is -1 L!`],
+        log: [...st.log, `${pc.name} uses ${ability} — ${foe.name}'s Level drops by ${drop} (to L${Math.max(1, foe.level - drop)})!`],
       })
-      return { ok: true, message: `Spores reduced ${foe.name}'s Level by 1!` }
+      return { ok: true, message: `${foe.name} is -${drop} L!` }
+    }
+
+    if (ability === 'hide-in-shadows') {
+      if (!foe) return { ok: false, message: 'No target.' }
+      const r = rollExploding(defaultRng, 6)
+      const total = r.total + pc.level
+      const acted = new Set(st.pcsActed)
+      acted.add(pc.id)
+      if (r.rolls[0] !== 1 && total >= foe.level) {
+        partySt.updateHero(pc.id, { activeEffects: [...pc.activeEffects, 'hide-in-shadows'] })
+        set({
+          pcsActed: acted,
+          log: [...st.log, `${pc.name} Hides in Shadows (${total} vs L${foe.level}) — next successful hit deals TRIPLE (3×) damage!`],
+        })
+        return { ok: true, message: `${pc.name} is hidden in shadows (3× damage on next hit)!` }
+      }
+      set({
+        pcsActed: acted,
+        log: [...st.log, `${pc.name} fails Hide in Shadows (${total} vs L${foe.level})!`],
+      })
+      return { ok: false, message: `Hide in Shadows failed (${total} vs L${foe.level}).` }
+    }
+
+    if (ability === 'hidden-blade') {
+      if (!foe) return { ok: false, message: 'No target.' }
+      partySt.updateHero(pc.id, { usedTraitsCombat: [...pc.usedTraitsCombat, 'Hidden Blade'] })
+      get().attack(pc, foe.uid, defaultRng, false, { isBonusAttack: true, bonusMod: t })
+      return { ok: true, message: `${pc.name} springs Hidden Blade (free surprise attack at +${t})!` }
+    }
+
+    if (ability === 'parry-stance') {
+      partySt.updateHero(pc.id, { activeEffects: [...pc.activeEffects, 'protection'] })
+      const bonusActed = new Set(st.pcsBonusActed)
+      bonusActed.add(pc.id)
+      set({
+        pcsBonusActed: bonusActed,
+        log: [...st.log, `${pc.name} adopts Parry Stance (+1 Defense this encounter)!`],
+      })
+      return { ok: true, message: `${pc.name} parries (+1 Defense)!` }
+    }
+
+    if (ability === 'bladesong' || ability === 'berserk-fighting') {
+      partySt.updateHero(pc.id, {
+        activeEffects: [...pc.activeEffects, ability],
+        usedTraitsAdventure: [...pc.usedTraitsAdventure, ability],
+      })
+      set({
+        log: [
+          ...st.log,
+          ability === 'bladesong'
+            ? `${pc.name} invokes Bladesong (+1 Attack for the entire encounter)!`
+            : `${pc.name} enters Berserk Fighting (+1 damage on every hit this combat)!`,
+        ],
+      })
+      return { ok: true, message: `${ability === 'bladesong' ? 'Bladesong' : 'Berserk Fighting'} active!` }
+    }
+
+    if (ability === 'chant-of-valor') {
+      partySt.updateHero(pc.id, { usedTraitsAdventure: [...pc.usedTraitsAdventure, 'Chant of Valor'] })
+      for (const ally of partySt.party) {
+        if (ally.status === 'alive') {
+          partySt.updateHero(ally.id, { activeEffects: [...ally.activeEffects, 'chant-of-valor'] })
+        }
+      }
+      set({
+        log: [...st.log, `${pc.name} raises the Chant of Valor (Free Action: +1 Attack to all allies)!`],
+      })
+      return { ok: true, message: 'Chant of Valor grants +1 Attack to the whole party!' }
+    }
+
+    if (ability === 'team-tactics') {
+      const target = partySt.party.find((p) => p.id === targetPcId) ?? partySt.party[0]
+      if (!target) return { ok: false, message: 'No target.' }
+      partySt.updateHero(pc.id, { usedTraitsCombat: [...pc.usedTraitsCombat, 'Intuitive Team Tactics'] })
+      partySt.updateHero(target.id, { activeEffects: [...target.activeEffects, 'chant-of-valor', 'protection'] })
+      set({
+        log: [...st.log, `${pc.name} uses Intuitive Team Tactics — ${target.name} gains +1 Attack & Defense!`],
+      })
+      return { ok: true, message: `${target.name} gains +1 from Team Tactics!` }
     }
 
     if (ability === 'gadget-weapon') {
@@ -927,6 +1123,18 @@ export const useCombat = create<CombatState>((set, get) => ({
       partySt.updateHero(pc.id, { activeEffects: [...pc.activeEffects, 'gadget-weapon'] })
       set({ log: [...st.log, `${pc.name} activates a Gadget-Enhanced Weapon (+${pc.level} melee Attack this encounter)!`] })
       return { ok: true, message: 'Gadget-Enhanced Weapon activated (+L Attack)!' }
+    }
+
+    if (ability === 'clockwork-armor') {
+      if (!partySt.spendResource(pc.id, 'gadget', 1)) {
+        return { ok: false, message: 'No Gadget points left.' }
+      }
+      partySt.updateHero(pc.id, {
+        armor: 'clockwork-armor',
+        activeEffects: [...pc.activeEffects, 'clockwork-active'],
+      })
+      set({ log: [...st.log, `${pc.name} overclocks Clockwork Armor (+3 Defense this encounter)!`] })
+      return { ok: true, message: 'Clockwork Armor activated (+3 Defense)!' }
     }
 
     if (ability === 'grenade') {
@@ -1038,7 +1246,6 @@ export const useCombat = create<CombatState>((set, get) => ({
   },
 
   withdrawOrFlee: (mode, hclValue) => {
-    // Each surviving foe strikes once; Withdrawing grants +1 Defense & allows shields (Book pp. 97–98)
     get().foeTurn(hclValue, defaultRng)
     set({
       active: false,
@@ -1056,6 +1263,286 @@ export const useCombat = create<CombatState>((set, get) => ({
     }
   },
 
+  /* ============================================================
+     Interactive Player-Rolled Defense Queue (Book pp. 96–97)
+     ============================================================ */
+  beginFoeTurnQueue: (hclValue) => {
+    const st = get()
+    const party = useParty.getState().party.filter((p) => p.status === 'alive')
+    const tierValue = tier(hclValue)
+    const alive = st.foes.filter((f) =>
+      f.kind === 'vermin' || f.kind === 'minion' ? (f.remaining ?? 0) > 0 : (f.life ?? 0) > 0,
+    )
+    if (alive.length === 0 || party.length === 0) {
+      set({ phase: 'pc-turn', pendingDefenses: [] })
+      return
+    }
+
+    // Book p. 97: In a corridor, maximum TWO Foes attack Positions 1 & 2 (or 3 & 4 on rear ambush).
+    const validTargets = st.inCorridor
+      ? st.wandering && party.length > 2
+        ? party.filter((p) => p.marchingOrder >= 3)
+        : party.filter((p) => p.marchingOrder <= 2)
+      : party
+    const targetPool = validTargets.length > 0 ? validTargets : party
+
+    // Check Paladin Challenge trait (Book p. 56: forces Foe to target Paladin)
+    const challenger = targetPool.find((p) => p.classId === 'paladin' && p.traits.includes('Challenge'))
+
+    const queue: PendingDefense[] = []
+    let pi = 0
+    for (const foe of alive) {
+      const dmg = parseAttackDamage(foe.damage, tierValue)
+      const minor = foe.kind === 'vermin' || foe.kind === 'minion'
+      const rawAttacks = minor ? (foe.remaining ?? 1) : Math.max(1, foe.attacks)
+      const skipped = foe.skipNextAttacks ?? 0
+      const effectiveAttacks = Math.max(
+        0,
+        (st.inCorridor && minor ? Math.min(2, rawAttacks) : rawAttacks) - skipped,
+      )
+
+      for (let a = 0; a < effectiveAttacks; a++) {
+        const target = challenger ?? targetPool[pi % targetPool.length]!
+        pi++
+        queue.push({
+          id: defUid(),
+          foeUid: foe.uid,
+          foeName: foe.name,
+          foeLevel: foe.level,
+          damage: dmg,
+          targetPcId: target.id,
+          firstOfCombat: st.round === 1 && a === 0,
+          resolved: false,
+        })
+      }
+    }
+
+    // Clear skipNextAttacks on foes
+    const updatedFoes = st.foes.map((f) => ({ ...f, skipNextAttacks: 0 }))
+
+    if (queue.length === 0) {
+      set({
+        foes: updatedFoes,
+        phase: 'pc-turn',
+        round: st.round + 1,
+        pcsActed: new Set(),
+        pcsBonusActed: new Set(),
+        pendingDefenses: [],
+        log: [...st.log, 'The entangled/distracted Foes are unable to attack this turn!'],
+      })
+      return
+    }
+
+    set({
+      foes: updatedFoes,
+      phase: 'foe-turn',
+      pendingDefenses: queue,
+    })
+  },
+
+  reassignDefenseTarget: (defId, newTargetPcId) => {
+    set((s) => ({
+      pendingDefenses: s.pendingDefenses.map((d) =>
+        d.id === defId && !d.resolved ? { ...d, targetPcId: newTargetPcId } : d,
+      ),
+    }))
+  },
+
+  rollSingleDefense: (defId, rng = defaultRng) => {
+    const st = get()
+    const item = st.pendingDefenses.find((d) => d.id === defId)
+    if (!item || item.resolved) return
+    const party = useParty.getState().party
+    const target = party.find((p) => p.id === item.targetPcId)
+    if (!target) return
+
+    const hasLight = partyHasLight(party)
+    const d = derive(target)
+    const foe = st.foes.find((f) => f.uid === item.foeUid)
+    const minor = foe ? foe.kind === 'vermin' || foe.kind === 'minion' : true
+
+    // Ranger Sworn Enemy die shift on Defense
+    let tierShift = 0
+    if (
+      target.classId === 'ranger' &&
+      target.swornEnemy &&
+      new RegExp(target.swornEnemy.replace(/s$/i, ''), 'i').test(item.foeName)
+    ) {
+      tierShift = 1
+    }
+    const die = [6, 8, 10, 12, 20][Math.min(4, d.tier - 1 + tierShift)] ?? 6
+
+    const foeCtx: FoeContext = {
+      name: item.foeName,
+      tags: foe?.tags ?? [],
+      kind: minor ? 'minor' : 'major',
+      count: foe?.remaining ?? 1,
+    }
+    const defMod =
+      target.mainHand !== undefined
+        ? fullDefenseModVs(target, foeCtx, {
+            inDarkness: !hasLight,
+            surprisedByWandering: st.wandering && st.round === 1,
+            firstAttackOfCombat: item.firstOfCombat,
+            hasLightSource: hasLight,
+          }).total
+        : d.defense
+
+    const def = rollDefense({ foeL: item.foeLevel, dieSides: die, modifiers: defMod, rng })
+
+    let actualDmg = def.success ? 0 : item.damage
+    let autoReduced = false
+    if (!def.success && target.traits.includes('Tough as Stone') && item.firstOfCombat) {
+      actualDmg = Math.max(0, actualDmg - 1)
+      autoReduced = true
+    }
+
+    if (!def.success && actualDmg > 0) {
+      const curLife = useParty.getState().party.find((p) => p.id === target.id)?.life ?? 0
+      useParty.getState().setLife(target.id, Math.max(0, curLife - actualDmg))
+    }
+
+    const line = def.success
+      ? `${item.foeName} → ${target.name}: DEFENDED! (rolled [${def.rolls.join('+')}]${defMod >= 0 ? `+${defMod}` : defMod} = ${def.defenseTotal} > L${item.foeLevel})`
+      : `${item.foeName} → ${target.name}: HIT for ${actualDmg} damage! (rolled [${def.rolls.join('+')}]${defMod >= 0 ? `+${defMod}` : defMod} = ${def.defenseTotal} vs L${item.foeLevel}${def.rolledOne ? ', Nat 1!' : ''}${autoReduced ? ', -1 Tough as Stone' : ''})`
+
+    set((s) => ({
+      pendingDefenses: s.pendingDefenses.map((x) =>
+        x.id === defId
+          ? {
+              ...x,
+              resolved: true,
+              rolled: def.rolls[0] ?? 1,
+              rolls: def.rolls,
+              total: def.defenseTotal,
+              mod: defMod,
+              exploded: def.exploded,
+              rolledOne: def.rolledOne,
+              success: def.success,
+              damageTaken: actualDmg,
+              damageReduced: autoReduced,
+            }
+          : x,
+      ),
+      log: [...s.log, line],
+    }))
+  },
+
+  rerollFailedDefense: (defId, source) => {
+    const st = get()
+    const item = st.pendingDefenses.find((d) => d.id === defId)
+    if (!item || !item.resolved || item.success) {
+      return { ok: false, message: 'Can only reroll a failed Defense roll.' }
+    }
+    const partySt = useParty.getState()
+    const target = partySt.party.find((p) => p.id === item.targetPcId)
+    if (!target) return { ok: false, message: 'Hero not found.' }
+
+    if (source === 'luck') {
+      const hlf = partySt.party.find((p) => p.classId === 'halfling' && (p.resources.luck ?? 0) > 0)
+      if (!hlf || !partySt.spendResource(hlf.id, 'luck', 1)) {
+        return { ok: false, message: 'No Halfling Luck available.' }
+      }
+    } else if (source === 'stubborn-resolve') {
+      if (target.usedTraitsAdventure.includes('Stubborn Resolve')) {
+        return { ok: false, message: 'Stubborn Resolve already used this adventure.' }
+      }
+      partySt.updateHero(target.id, {
+        usedTraitsAdventure: [...target.usedTraitsAdventure, 'Stubborn Resolve'],
+      })
+    } else if (source === 'lucky-hat') {
+      if (target.usedTraitsAdventure.includes('Lucky Hat')) {
+        return { ok: false, message: 'Lucky Hat already used this adventure.' }
+      }
+      partySt.updateHero(target.id, {
+        usedTraitsAdventure: [...target.usedTraitsAdventure, 'Lucky Hat'],
+      })
+    }
+
+    // Refund the damage taken on the first roll, then roll again
+    if ((item.damageTaken ?? 0) > 0) {
+      const cur = useParty.getState().party.find((p) => p.id === target.id)?.life ?? 0
+      partySt.setLife(target.id, cur + (item.damageTaken ?? 0))
+    }
+
+    set((s) => ({
+      pendingDefenses: s.pendingDefenses.map((x) =>
+        x.id === defId ? { ...x, resolved: false, damageTaken: 0 } : x,
+      ),
+    }))
+    get().rollSingleDefense(defId)
+    return { ok: true, message: `${target.name} rerolls Defense (${source})!` }
+  },
+
+  reduceDefenseDamage: (defId, traitName) => {
+    const st = get()
+    const item = st.pendingDefenses.find((d) => d.id === defId)
+    if (!item || !item.resolved || item.success || (item.damageTaken ?? 0) <= 0 || item.damageReduced) {
+      return { ok: false, message: 'No unreduced damage on this attack.' }
+    }
+    const partySt = useParty.getState()
+    const target = partySt.party.find((p) => p.id === item.targetPcId)
+    if (!target) return { ok: false, message: 'Hero not found.' }
+
+    const reduction = traitName === 'Unyielding Form' ? Math.min(2, item.damageTaken ?? 1) : 1
+    const cur = partySt.party.find((p) => p.id === target.id)?.life ?? 0
+    partySt.setLife(target.id, cur + reduction)
+    partySt.updateHero(target.id, {
+      usedTraitsCombat: [...target.usedTraitsCombat, traitName],
+      usedTraitsAdventure: [...target.usedTraitsAdventure, traitName],
+    })
+
+    set((s) => ({
+      pendingDefenses: s.pendingDefenses.map((x) =>
+        x.id === defId
+          ? { ...x, damageTaken: Math.max(0, (x.damageTaken ?? 1) - reduction), damageReduced: true }
+          : x,
+      ),
+      log: [...s.log, `${target.name} activates ${traitName} — reduces damage by ${reduction}!`],
+    }))
+    return { ok: true, message: `${traitName} prevented ${reduction} damage!` }
+  },
+
+  triggerCounterAttack: (defId, pc) => {
+    const st = get()
+    const item = st.pendingDefenses.find((d) => d.id === defId)
+    if (!item || !item.resolved || !item.success || item.counterUsed) {
+      return { ok: false, message: 'Counter-attack not available.' }
+    }
+    set((s) => ({
+      pendingDefenses: s.pendingDefenses.map((x) =>
+        x.id === defId ? { ...x, counterUsed: true } : x,
+      ),
+    }))
+    useParty.getState().updateHero(pc.id, {
+      usedTraitsCombat: [...pc.usedTraitsCombat, 'counter-attack'],
+    })
+    get().attack(pc, item.foeUid, defaultRng, false, { isBonusAttack: true })
+    return { ok: true, message: `${pc.name} strikes back with a free counter-attack!` }
+  },
+
+  finishFoeTurnQueue: () => {
+    const st = get()
+    const nextFoes = st.ambushBonus
+      ? st.foes.map((f) => ({ ...f, level: f.baseLevel }))
+      : st.foes
+    const lines = st.pendingDefenses.map((d) =>
+      d.success
+        ? `${d.foeName} → Defended (${d.total} > L${d.foeLevel})`
+        : `${d.foeName} → Hit (${d.damageTaken ?? d.damage} dmg)`,
+    )
+    set({
+      foes: nextFoes,
+      ambushBonus: false,
+      phase: 'pc-turn',
+      round: st.round + 1,
+      pcsActed: new Set(),
+      pcsBonusActed: new Set(),
+      pendingDefenses: [],
+      lastFoeTurn: lines,
+    })
+  },
+
   foeTurn: (hclValue, rng = defaultRng) => {
     const st = get()
     const party = useParty.getState().party.filter((p) => p.status === 'alive')
@@ -1070,9 +1557,6 @@ export const useCombat = create<CombatState>((set, get) => ({
     }
 
     const hasLight = partyHasLight(party)
-
-    // Book p. 97: In a corridor, maximum TWO Foes can attack the PCs in positions 1 & 2
-    // (or positions 3 & 4 if ambushed from the rear by Wandering Monsters!).
     const validTargets = st.inCorridor
       ? st.wandering && party.length > 2
         ? party.filter((p) => p.marchingOrder >= 3)
@@ -1112,7 +1596,6 @@ export const useCombat = create<CombatState>((set, get) => ({
         if (def.success) {
           lines.push(`${foe.name} → ${target.name}: defended (${def.defenseTotal} > L${foe.level})`)
         } else {
-          // Check Dwarf Tough as Stone / Barbarian Tough Skinned / Acrobat Graceful Dodge / Paladin Armor Mastery
           let actualDmg = dmg
           if (target.traits.includes('Tough as Stone') && st.round === 1 && a === 0) {
             actualDmg = Math.max(0, actualDmg - 1)
@@ -1128,7 +1611,6 @@ export const useCombat = create<CombatState>((set, get) => ({
       }
     }
 
-    // Clear Turn-1 Ambush bonus if active
     const nextFoes = st.ambushBonus
       ? st.foes.map((f) => ({ ...f, level: f.baseLevel }))
       : st.foes
@@ -1139,6 +1621,8 @@ export const useCombat = create<CombatState>((set, get) => ({
       phase: 'pc-turn',
       round: s.round + 1,
       pcsActed: new Set(),
+      pcsBonusActed: new Set(),
+      pendingDefenses: [],
       lastFoeTurn: lines,
       log: [...s.log, ...lines],
     }))
@@ -1148,7 +1632,7 @@ export const useCombat = create<CombatState>((set, get) => ({
   tryMorale: (foeUid, rng = defaultRng) => {
     const foe = get().foes.find((f) => f.uid === foeUid)
     if (!foe) return 'never'
-    if (neverTestsMorale(foe.morale) || isAggressive(foe.reactionLabel) && /death/i.test(foe.reactionLabel)) {
+    if (neverTestsMorale(foe.morale) || (isAggressive(foe.reactionLabel) && /death/i.test(foe.reactionLabel))) {
       return 'never'
     }
     const roll = rollDie(rng, 6)
@@ -1189,6 +1673,8 @@ export const useCombat = create<CombatState>((set, get) => ({
       round: 0,
       log: [],
       pcsActed: new Set(),
+      pcsBonusActed: new Set(),
+      pendingDefenses: [],
       lastAttack: null,
       lastFoeTurn: null,
       lootReady: false,

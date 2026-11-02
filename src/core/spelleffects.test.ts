@@ -126,4 +126,37 @@ describe('Play Sheet, Hands, Lantern, Darkness & Corridor rules', () => {
     expect(useCombat.getState().canPcMelee(p3!).ok).toBe(true)
     expect(useCombat.getState().canPcMelee(p4!).ok).toBe(true)
   })
+
+  it('populates an interactive player-rolled Defense Queue with target reassignment and damage reduction', () => {
+    const partySt = useParty.getState()
+    partySt.reset()
+    partySt.addHero('Bjorn', 'warrior', { traits: ['Shield Expert'] })
+    partySt.addHero('Solveig', 'cleric')
+    partySt.addHero('Rask', 'rogue')
+    partySt.addHero('Alrik', 'wizard')
+
+    const combatSt = useCombat.getState()
+    combatSt.begin('minion', 'dungeon', 1, { inCorridor: true, wandering: false })
+    combatSt.beginFoeTurnQueue(1)
+
+    const queue = useCombat.getState().pendingDefenses
+    expect(queue.length).toBeGreaterThan(0)
+    expect(queue.length).toBeLessThanOrEqual(2) // Corridor caps minion attacks at 2!
+
+    const firstDef = queue[0]!
+    const bjorn = useParty.getState().party[0]!
+    useCombat.getState().reassignDefenseTarget(firstDef.id, bjorn.id)
+    expect(useCombat.getState().pendingDefenses[0]!.targetPcId).toBe(bjorn.id)
+
+    // Roll a guaranteed failure (natural 1) and then use Shield Expert to reduce damage by 1
+    const lifeBefore = useParty.getState().party[0]!.life
+    useCombat.getState().rollSingleDefense(firstDef.id, () => 0.01)
+    expect(useCombat.getState().pendingDefenses[0]!.resolved).toBe(true)
+    expect(useCombat.getState().pendingDefenses[0]!.success).toBe(false)
+    expect(useParty.getState().party[0]!.life).toBe(lifeBefore - 1)
+
+    const red = useCombat.getState().reduceDefenseDamage(firstDef.id, 'Shield Expert')
+    expect(red.ok).toBe(true)
+    expect(useParty.getState().party[0]!.life).toBe(lifeBefore)
+  })
 })

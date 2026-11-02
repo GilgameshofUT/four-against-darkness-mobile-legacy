@@ -8,6 +8,7 @@ import {
   getStartingLoadouts,
   type CreatePCOptions,
 } from '../../state/pc'
+import { IconCoin, IconDice, IconHeart, IconShield, IconSword } from './icons'
 
 const DEFAULT_NAMES: Record<string, string> = {
   warrior: 'Bjorn',
@@ -126,10 +127,10 @@ export function ClassPicker({
           {selected.name} — {selected.role}
         </div>
         <div className="picker__detail-meta">
-          <span>❤️ Life {selected.life.text}</span>
-          <span>⚔️ Atk {selected.attack.text}</span>
-          <span>🛡️ Def {selected.defense.text}</span>
-          <span>💰 Gold {selected.startingWealth.text}</span>
+          <span><IconHeart size={13} /> Life {selected.life.text}</span>
+          <span><IconSword size={13} /> Atk {selected.attack.text}</span>
+          <span><IconShield size={13} /> Def {selected.defense.text}</span>
+          <span><IconCoin size={13} /> Gold {selected.startingWealth.text}</span>
         </div>
         <p className="picker__detail-gear">
           <b>Allowed Armor:</b> {selected.armorAllowed} · <b>Allowed Weapons:</b> {selected.weaponsAllowed}
@@ -150,7 +151,7 @@ export function ClassPicker({
             <span>
               2. Starting Trait{maxTraits > 1 ? 's (Pick 2)' : ' (Pick 1 or Roll d6)'}
             </span>
-            <button className="chip" onClick={rollRandomTraits}>🎲 Roll d6 Trait</button>
+            <button className="chip" onClick={rollRandomTraits}><IconDice size={13} /> Roll d6 Trait</button>
           </div>
           <div className="chiprow" style={{ marginTop: 4 }}>
             {selected.traits.map((t, idx) => {

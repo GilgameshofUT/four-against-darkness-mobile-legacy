@@ -8,8 +8,24 @@ import { useDungeon, type Environment, type DoorRef } from '../../state/dungeon'
 import { useCombat } from '../../state/combat'
 import { useUi } from '../../state/ui'
 import { partyHcl, useParty } from '../../state/party'
-import { partyHasLight, pcProvidesLight } from '../../state/pc'
+import { getClass, maxLife, partyHasLight, pcProvidesLight } from '../../state/pc'
 import type { RandTable } from '../../data/schema'
+import {
+  IconCamp,
+  IconCoin,
+  IconCrown,
+  IconDice,
+  IconDoor,
+  IconEye,
+  IconHeart,
+  IconLantern,
+  IconMap,
+  IconPotion,
+  IconPrayer,
+  IconSearch,
+  IconSword,
+  IconTrap,
+} from '../components/icons'
 
 const DIR_NAME: Record<string, string> = { N: 'North', E: 'East', S: 'South', W: 'West' }
 
@@ -21,11 +37,32 @@ function rollTableEntry(t: RandTable): { index: number; result: string } {
   return { index: idx + 1, result: t.entries[idx]?.result ?? '' }
 }
 
+interface TrapChallengeState {
+  description: string
+  level: number
+  damage: number
+  targetPcId: string
+  hasTreasureAfter: boolean
+  disarmAttempted: boolean
+  disarmNote?: string
+  saveRolled: boolean
+  saveTotal?: number
+  saveSuccess?: boolean
+  saveNote?: string
+}
+
 interface Outcome {
   title: string
   body: string
-  action?: 'fight' | 'search' | 'found-choice' | 'statue-choice' | 'puzzle-choice' | 'healer-shop' | 'alchemist-shop' | 'trap-disarm' | undefined
-  trapLevel?: number
+  action?:
+    | 'fight'
+    | 'search'
+    | 'found-choice'
+    | 'statue-choice'
+    | 'puzzle-choice'
+    | 'healer-shop'
+    | 'alchemist-shop'
+    | undefined
   puzzleLevel?: number
 }
 
@@ -41,6 +78,10 @@ export function DungeonScreen() {
   const party = partySt.party
   const setTab = useUi((s) => s.setTab)
   const [outcome, setOutcome] = useState<Outcome | null>(null)
+  const [trapState, setTrapState] = useState<TrapChallengeState | null>(null)
+  const [healPicker, setHealPicker] = useState<
+    null | { kind: 'cleric-heal' | 'cleric-blessing' | 'paladin-heal' | 'bandage'; actorId: string }
+  >(null)
   const [confirmClear, setConfirmClear] = useState(false)
   const [campMsg, setCampMsg] = useState<string | null>(null)
 
@@ -50,15 +91,14 @@ export function DungeonScreen() {
   const hasLight = partyHasLight(party)
   const lightBearer = party.find((p) => pcProvidesLight(p))
 
-  // Check if a Rogue/Gnome/Kukla is in front row (#1 or #2) to disarm traps (Book p. 110 & p. 164)
+  // Front-row disarmer (#1 or #2 Rogue, Gnome, Kukla, or Acrobat)
   const trapDisarmer = party.find(
     (p) =>
       p.status === 'alive' &&
       p.marchingOrder <= 2 &&
-      (p.classId === 'rogue' || p.classId === 'gnome' || p.classId === 'kukla'),
+      (p.classId === 'rogue' || p.classId === 'gnome' || p.classId === 'kukla' || p.classId === 'acrobat'),
   )
 
-  /** Award rolled treasure gold/items to the party and return a descriptive summary. */
   const resolveAndAwardTreasure = (): string => {
     const t = getTable('treasure')!
     const r = rollTableEntry(t)
@@ -69,7 +109,6 @@ export function DungeonScreen() {
     else if (r.index === 5) gpEarned = rollNotation(defaultRng, '3d6') * 10
     else if (r.index === 6) gpEarned = 50
 
-    // Dwarf Gold Nose trait option: maximize random gp once per adventure
     const dwarfNose = party.find(
       (p) => p.classId === 'dwarf' && p.traits.includes('Gold Nose') && !p.usedTraitsAdventure.includes('Gold Nose'),
     )
@@ -82,19 +121,37 @@ export function DungeonScreen() {
 
     if (gpEarned > 0) {
       partySt.addPartyGold(gpEarned)
-      return `${r.result}\n\n💰 Awarded +${gpEarned}gp to the party!`
+      return `${r.result}\n\nAwarded +${gpEarned}gp to the party!`
     }
     if (r.index === 3) {
-      // Scroll found! Give to Wizard/Elf/Caster or first PC
       const recipient = party.find((p) => p.classId === 'wizard' || p.classId === 'elf') ?? party[0]
       if (recipient) {
         partySt.updateHero(recipient.id, {
           inventory: [...recipient.inventory, 'scroll-of-blessing'],
         })
       }
-      return `${r.result}\n\n📜 Added Scroll to ${recipient?.name ?? 'party'}'s backpack!`
+      return `${r.result}\n\nAdded Scroll to ${recipient?.name ?? 'party'}'s backpack!`
     }
     return r.result
+  }
+
+  /** Start an interactive Trap Challenge so the player actively rolls Disarm & Save! */
+  const startTrapChallenge = (env: Environment, hasTreasureAfter: boolean) => {
+    const et = ENV_TABLES[env]
+    const trapRoll = rollTableEntry(getTable(et.trap)!)
+    const trapL = hcl + 2
+    const targetPc = party.find((p) => p.status === 'alive') ?? party[0]
+    if (!targetPc) return
+    setOutcome(null)
+    setTrapState({
+      description: trapRoll.result,
+      level: trapL,
+      damage: trapRoll.index === 6 ? 2 : 1,
+      targetPcId: targetPc.id,
+      hasTreasureAfter,
+      disarmAttempted: false,
+      saveRolled: false,
+    })
   }
 
   const resolveSpecialFeature = (env: Environment): Outcome => {
@@ -102,7 +159,6 @@ export function DungeonScreen() {
     const r = rollTableEntry(getTable(et.feature)!)
     if (env === 'dungeon') {
       if (r.index === 1) {
-        // Fountain: heals 1 Life to all wounded PCs the first time
         if (!d.fountainUsed) {
           for (const p of party) {
             if (p.status === 'alive') partySt.setLife(p.id, p.life + 1)
@@ -110,7 +166,7 @@ export function DungeonScreen() {
           useDungeon.setState({ fountainUsed: true })
           return {
             title: 'Special Feature: Fountain',
-            body: `${r.result}\n\n💧 All wounded heroes recover +1 Life!`,
+            body: `${r.result}\n\nAll wounded heroes recover +1 Life!`,
           }
         }
         return { title: 'Special Feature: Fountain', body: `${r.result}\n\n(Already used a fountain this adventure.)` }
@@ -124,7 +180,7 @@ export function DungeonScreen() {
         }
         return {
           title: 'Special Feature: Blessed Temple',
-          body: `${r.result}\n\n✨ ${target?.name ?? 'Hero'} gains +1 Attack vs Undead and Demons!`,
+          body: `${r.result}\n\n${target?.name ?? 'Hero'} gains +1 Attack vs Undead and Demons!`,
         }
       }
       if (r.index === 4) {
@@ -136,7 +192,7 @@ export function DungeonScreen() {
         }
         return {
           title: 'Special Feature: Cursed Altar',
-          body: `${r.result}\n\n⚠️ ${victim?.name ?? 'A hero'} is cursed (-1 Defense until Blessed)!`,
+          body: `${r.result}\n\n${victim?.name ?? 'A hero'} is cursed (-1 Defense until Blessed)!`,
         }
       }
       if (r.index === 5) {
@@ -159,12 +215,16 @@ export function DungeonScreen() {
     return { title: 'Special Feature', body: r.result }
   }
 
-  const resolveSpecialEvent = (env: Environment): Outcome => {
+  const resolveSpecialEvent = (env: Environment): Outcome | null => {
     const et = ENV_TABLES[env]
     const r = rollTableEntry(getTable(et.event)!)
     if (env === 'dungeon') {
       if (r.index === 2) {
         return { title: 'Special Event: Wandering Monsters!', body: r.result, action: 'fight' }
+      }
+      if (r.index === 4) {
+        startTrapChallenge(env, false)
+        return null
       }
       if (r.index === 5) {
         return { title: 'Special Event: Wandering Healer', body: r.result, action: 'healer-shop' }
@@ -177,58 +237,39 @@ export function DungeonScreen() {
   }
 
   const showContent = (kind: string, env: Environment, d2d6?: number) => {
-    const et = ENV_TABLES[env]
     const rollTag = d2d6 ? ` (2d6 = ${d2d6})` : ''
     if (kind === 'foe' || kind === 'dragon-lair') {
       const pending = useDungeon.getState().pendingEncounter
       setOutcome({
-        title: pending?.isFinalBoss ? `🔥 FINAL BOSS ENCOUNTER!${rollTag}` : `Encounter!${rollTag}`,
+        title: pending?.isFinalBoss ? `FINAL BOSS ENCOUNTER!${rollTag}` : `Encounter!${rollTag}`,
         body:
           (pending?.bossRollInfo ? `${pending.bossRollInfo}\n\n` : '') +
-          (kind === 'dragon-lair' ? 'A dragon guards this lair!' : 'Foes block your path.'),
+          (kind === 'dragon-lair' ? 'A dragon guards this lair!' : 'Hostile Foes block your path.'),
         action: 'fight',
       })
     } else if (kind === 'empty') {
       setOutcome({
-        title: `Empty Tile${rollTag}`,
+        title: `Empty Chamber${rollTag}`,
         body: hasLight
-          ? 'Nothing immediately visible — you may Search this tile (d6) or choose your next exit.'
-          : '🌑 It is pitch dark! Without a light source you cannot Search this tile.',
+          ? 'Nothing immediately visible — you may Search this tile (d6) or choose your next doorway.'
+          : 'Pitch Darkness! Without a light source you cannot Search this tile.',
         action: hasLight ? 'search' : undefined,
       })
     } else if (kind === 'treasure') {
       setOutcome({
-        title: `Treasure!${rollTag}`,
+        title: `Treasure Discovered!${rollTag}`,
         body: resolveAndAwardTreasure(),
       })
     } else if (kind === 'treasure-trap') {
-      const trapRoll = rollTableEntry(getTable(et.trap)!)
-      const trapL = hcl + 2
-      if (trapDisarmer) {
-        setOutcome({
-          title: `Trap Spotted!${rollTag}`,
-          body: `${trapRoll.result}\n\n${trapDisarmer.name} (#${trapDisarmer.marchingOrder}) can attempt to Disarm the Trap (Save vs L${trapL}) before it triggers!`,
-          action: 'trap-disarm',
-          trapLevel: trapL,
-        })
-      } else {
-        // Trigger trap damage on front-row PC (#1), then award treasure
-        const leader = party[0]
-        if (leader) partySt.setLife(leader.id, leader.life - 1)
-        const lootText = resolveAndAwardTreasure()
-        setOutcome({
-          title: `Trapped Treasure!${rollTag}`,
-          body: `Trap — ${trapRoll.result} (${leader?.name ?? 'Leader'} takes 1 damage!)\n\nLoot — ${lootText}`,
-        })
-      }
+      startTrapChallenge(env, true)
     } else if (kind === 'special-feature') {
       setOutcome(resolveSpecialFeature(env))
     } else if (kind === 'special-event') {
-      setOutcome(resolveSpecialEvent(env))
+      const ev = resolveSpecialEvent(env)
+      if (ev) setOutcome(ev)
     }
   }
 
-  /** Launch combat in the Combat store and switch to the Encounter screen. */
   const goFight = (overrideKind?: 'vermin' | 'minion' | 'weird' | 'boss') => {
     const st = useDungeon.getState()
     const pending = st.pendingEncounter
@@ -244,16 +285,16 @@ export function DungeonScreen() {
     setTab('combat')
   }
 
-  /** The player picks a door: walk back through a known one, or into the dark. */
   const onDoor = (door: DoorRef) => {
     setCampMsg(null)
+    setTrapState(null)
     const prevId = d.currentId
     d.chooseDoor(d.currentId!, door.y, door.x)
     const st = useDungeon.getState()
 
     if (st.lastMessage) {
       setOutcome({
-        title: st.pendingEncounter ? 'Rear Ambush!' : 'Notice',
+        title: st.pendingEncounter ? 'Rear Ambush!' : 'Dungeon Notice',
         body: st.lastMessage,
         action: st.pendingEncounter ? 'fight' : undefined,
       })
@@ -262,10 +303,6 @@ export function DungeonScreen() {
     if (st.currentId === prevId) return
     const cur = st.tiles.find((t) => t.id === st.currentId)
     if (!cur) return
-    if (st.pendingEncounter) {
-      showContent(cur.content.kind, cur.environment, cur.contentRoll2d6)
-      return
-    }
     showContent(cur.content.kind, cur.environment, cur.contentRoll2d6)
   }
 
@@ -277,7 +314,6 @@ export function DungeonScreen() {
       })
       return
     }
-    // Check Dwarf Underground Explorer (+1 in dungeon/caverns) or Wizard Keen Observer (+1)
     let bonus = 0
     if (
       (d.environment === 'dungeon' || d.environment === 'caverns') &&
@@ -313,6 +349,10 @@ export function DungeonScreen() {
 
   const open = current ? d.openDoors(current.id) : []
   const back = current ? d.connectedDoors(current.id) : []
+  const clericWithHeal = party.find((p) => p.classId === 'cleric' && (p.resources.healing ?? 0) > 0 && p.status === 'alive')
+  const clericWithBless = party.find((p) => p.classId === 'cleric' && (p.resources.blessing ?? 0) > 0 && p.status === 'alive')
+  const paladinWithPrayer = party.find((p) => p.classId === 'paladin' && (p.resources.prayer ?? 0) > 0 && p.status === 'alive')
+  const bandageHolder = party.find((p) => p.inventory.includes('bandage'))
 
   if (party.length < 4) {
     return (
@@ -321,11 +361,13 @@ export function DungeonScreen() {
         title="Assemble Your Party First"
         subtitle={`You have ${party.length}/4 adventurers recruited.`}
       >
-        <div className="scaffold-note">
-          Before entering the dungeon, recruit all <b>4 heroes</b>, choose their starting loadouts and spells, and verify someone carries a <b>Lantern</b>.
-          <div style={{ marginTop: 'var(--sp-3)' }}>
+        <div className="pcsheet">
+          <p>
+            Before entering the dungeon, recruit all <b>4 heroes</b>, choose their starting loadouts and spells, and verify someone carries a <b>Lantern</b>.
+          </p>
+          <div style={{ marginTop: 'var(--sp-2)' }}>
             <button className="btn btn--moss" onClick={() => setTab('party')}>
-              Go to Party Creation ({party.length}/4) →
+              Go to Party Creation ({party.length}/4)
             </button>
           </div>
         </div>
@@ -335,12 +377,12 @@ export function DungeonScreen() {
 
   return (
     <ScreenShell
-      eyebrow={`Random Dungeon · HCL ${hcl} · Major Foes: ${d.majorFoesMet}${d.finalBossSlain ? ' · 🏆 BOSS SLAIN' : ''}`}
+      eyebrow={`Dungeon Delve · HCL ${hcl} · Major Foes: ${d.majorFoesMet}${d.finalBossSlain ? ' · BOSS SLAIN' : ''}`}
       title="The Sunless Warrens"
       subtitle={
         d.started
-          ? `${d.tiles.length} tiles · ${d.environment} · ${
-              hasLight ? `🕯️ Light: ${lightBearer?.name}` : '🌑 DARKNESS (-2 all rolls!)'
+          ? `${d.tiles.length} rooms mapped · ${d.environment} · ${
+              hasLight ? `Light: ${lightBearer?.name}` : 'DARKNESS (-2 all rolls!)'
             }`
           : 'Slay the Final Boss and get out alive.'
       }
@@ -351,33 +393,32 @@ export function DungeonScreen() {
           display: 'grid',
           gridTemplateColumns: 'repeat(4, 1fr)',
           gap: 6,
-          marginBottom: 'var(--sp-2)',
         }}
       >
         {party.map((p) => {
           const lit = pcProvidesLight(p)
+          const cap = maxLife(getClass(p.classId), p.level, p.traits)
           return (
             <button
               key={p.id}
-              className="chip"
+              className="statbox"
               style={{
-                display: 'flex',
-                flexDirection: 'column',
                 alignItems: 'flex-start',
-                padding: '4px 6px',
-                borderColor: lit ? 'var(--amber-400)' : 'var(--line)',
+                textAlign: 'left',
+                borderColor: lit ? 'var(--amber-400)' : 'rgba(180,150,100,0.22)',
               }}
               onClick={() => setTab('party')}
-              title="Tap to inspect Play Sheet, hands, or swap Marching Order"
+              title="Tap to open Play Sheet, swap hands, or reorder Marching Order"
             >
-              <span style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>
-                #{p.marchingOrder} {p.marchingOrder <= 2 ? 'Front' : 'Rear'} {lit ? '🕯️' : ''}
+              <span className="eyebrow" style={{ fontSize: '0.6rem', display: 'flex', alignItems: 'center', gap: 3 }}>
+                #{p.marchingOrder} {p.marchingOrder <= 2 ? 'Front' : 'Rear'}
+                {lit && <IconLantern size={11} />}
               </span>
-              <span style={{ fontWeight: 600, fontSize: '0.78rem', color: 'var(--parch-100)' }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: '0.82rem', color: 'var(--parch-50)' }}>
                 {p.name}
               </span>
-              <span style={{ fontSize: '0.7rem', color: p.life <= 2 ? 'var(--blood-300)' : 'var(--amber-200)' }}>
-                ❤️ {p.life} · 💰 {p.gold}g
+              <span style={{ fontSize: '0.7rem', color: p.life <= 2 ? 'var(--blood-300)' : 'var(--amber-200)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <IconHeart size={11} /> {p.life}/{cap} · {p.gold}g
               </span>
             </button>
           )
@@ -391,53 +432,53 @@ export function DungeonScreen() {
             className={`chip${d.environment === e ? ' chip--amber' : ''}`}
             onClick={() => d.setEnvironment(e)}
           >
-            {e}
+            <IconMap size={13} /> {e}
           </button>
         ))}
       </div>
 
       {!d.started ? (
-        <div className="scaffold-note">
+        <div className="pcsheet">
           <div>
-            Your mission: explore the dungeon door-by-door, track <b>Major Foes</b> (each rolls{' '}
-            <code>d6 + prior Major Foes ≥ 6</code> to reveal the <b>Final Boss</b>), slay the Final Boss, and <b>return to the Entrance Tile alive</b>.
+            Your mission: explore the subterranean complex door-by-door, track <b>Major Foes</b> (each rolls{' '}
+            <code>d6 + prior Major Foes ≥ 6</code> to reveal the <b>Final Boss</b>), slay the Final Boss, and <b>return to the Entrance Stairs alive</b>.
           </div>
           {!hasLight && (
-            <div style={{ color: 'var(--blood-300)', marginTop: 8, fontSize: '0.82rem' }}>
-              ⚠️ Nobody in your party has a light source equipped! You will fight and explore at -2 in pitch darkness unless you buy/equip a Lantern on the Party tab.
+            <div style={{ color: 'var(--blood-300)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <IconLantern size={15} /> Nobody in your party has a light source equipped! Equip a Lantern on the Party tab first.
             </div>
           )}
-          <div style={{ marginTop: 'var(--sp-3)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
               className="btn btn--moss"
               onClick={() => {
                 d.start()
                 setOutcome({
-                  title: 'Entrance Room Placed (Tile #1)',
-                  body: 'You step into the first room of the dungeon. Choose an exit door below to delve into the dark.',
+                  title: 'Entrance Hall Mapped (Tile #1)',
+                  body: 'You descend the stone stairs into the Entrance Hall. Tap any gold doorway on the map or choose an exit door below to open it.',
                 })
               }}
             >
-              Enter the Dungeon
+              <IconDoor size={16} /> Descend into the Dungeon
             </button>
             {!hasLight && (
               <button className="btn btn--ghost" onClick={() => setTab('party')}>
-                Equip Lantern First →
+                Equip Lantern First
               </button>
             )}
           </div>
         </div>
       ) : d.escapedAlive ? (
-        <div className="scaffold-note">
-          <h3 style={{ marginTop: 0, fontFamily: 'var(--font-display)', color: 'var(--amber-200)' }}>
-            {d.finalBossSlain ? '🏆 Expedition Victory!' : 'Expedition Concluded'}
+        <div className="pcsheet">
+          <h3 style={{ marginTop: 0, fontFamily: 'var(--font-display)', color: 'var(--amber-200)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <IconCrown size={20} /> {d.finalBossSlain ? 'Expedition Victory!' : 'Expedition Concluded'}
           </h3>
           <p>
             {d.finalBossSlain
-              ? 'Your party slew the Final Boss of the Sunless Warrens and made it back to the surface alive with their loot!'
+              ? 'Your party slew the Final Boss of the Sunless Warrens and made it back up the Entrance Stairs alive with their spoils!'
               : 'Your party retreated safely to the surface to tend their wounds and resupply.'}
           </p>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
             <button
               className="btn btn--moss"
               onClick={() => {
@@ -455,15 +496,15 @@ export function DungeonScreen() {
       ) : (
         <>
           <div className="mapcard">
-            <TileMap height={220} />
+            <TileMap height={240} onSelectDoor={(dr) => !d.pendingEncounter && !trapState && onDoor(dr)} />
           </div>
 
           {current && (
             <div className="tileinfo">
-              <span className="eyebrow">{isAtEntrance ? 'Entrance (#1)' : 'Current Tile'}</span>
+              <span className="eyebrow">{isAtEntrance ? 'Entrance Stairs (#1)' : `Tile #${d.tiles.indexOf(current) + 1}`}</span>
               <span>
                 {current.corridor ? 'Corridor (1-wide: #1&#2 melee)' : 'Room (All 4 melee)'} ·{' '}
-                {current.searched ? 'searched' : 'unsearched'} · {current.environment}
+                {current.searched ? 'Searched' : 'Unsearched'}
               </span>
               <button
                 className={`tileinfo__clear${confirmClear ? ' is-armed' : ''}`}
@@ -471,34 +512,220 @@ export function DungeonScreen() {
                   if (confirmClear) {
                     d.reset()
                     setOutcome(null)
+                    setTrapState(null)
                     setConfirmClear(false)
                   } else setConfirmClear(true)
                 }}
-                title="Reset the dungeon"
               >
-                {confirmClear ? 'Sure?' : 'Reset'}
+                {confirmClear ? 'Confirm?' : 'Reset'}
               </button>
             </div>
           )}
 
+          {/* INTERACTIVE TRAP CHALLENGE CARD (Player rolls Disarm & Avoid Save!) */}
+          {trapState && (
+            <div className="defcard">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="eyebrow" style={{ color: 'var(--amber-300)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <IconTrap size={15} /> Interactive Trap Challenge · Level {trapState.level}
+                </span>
+                <span className="chip chip--blood">{trapState.damage} Dmg on Fail</span>
+              </div>
+              <div style={{ fontSize: '0.88rem', color: 'var(--parch-100)' }}>
+                {trapState.description}
+              </div>
+
+              {/* Step 1: Front-Row Disarm Option */}
+              {!trapState.disarmAttempted && !trapState.saveRolled && trapDisarmer && (
+                <div style={{ padding: '8px 10px', borderRadius: 6, background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(180,150,100,0.2)' }}>
+                  <div className="eyebrow" style={{ marginBottom: 4 }}>
+                    Step 1 — Front-Row Trap Detection ({trapDisarmer.name} #{trapDisarmer.marchingOrder})
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--parch-200)', marginBottom: 8 }}>
+                    {trapDisarmer.name} spots the mechanism and can attempt a Disarm Save vs. L{trapState.level} (adding +{trapOrLockMod(trapDisarmer, 'disarm', !hasLight)}).
+                  </div>
+                  <button
+                    className="btn btn--moss"
+                    onClick={() => {
+                      const mod = trapOrLockMod(trapDisarmer, 'disarm', !hasLight)
+                      const r = rollExploding(defaultRng, 6)
+                      const total = r.total + mod
+                      if (r.rolls[0] !== 1 && total >= trapState.level) {
+                        const loot = trapState.hasTreasureAfter ? `\n\n${resolveAndAwardTreasure()}` : ''
+                        setTrapState(null)
+                        setOutcome({
+                          title: `Trap Disarmed! (Rolled [${r.rolls.join('+')}] + ${mod} = ${total} vs L${trapState.level})`,
+                          body: `${trapDisarmer.name} neutralizes the trap before it can spring!${loot}`,
+                        })
+                      } else {
+                        setTrapState({
+                          ...trapState,
+                          disarmAttempted: true,
+                          disarmNote: `${trapDisarmer.name} rolled [${r.rolls.join('+')}] + ${mod} = ${total} vs L${trapState.level} — Disarm failed! The trap springs!`,
+                        })
+                      }
+                    }}
+                  >
+                    <IconDice size={16} /> Roll Disarm Save ({trapDisarmer.name} +{trapOrLockMod(trapDisarmer, 'disarm', !hasLight)})
+                  </button>
+                </div>
+              )}
+
+              {trapState.disarmNote && (
+                <div style={{ fontSize: '0.8rem', color: 'var(--blood-300)' }}>
+                  {trapState.disarmNote}
+                </div>
+              )}
+
+              {/* Step 2: Threatened Hero Rolls Save to Avoid Trap */}
+              {!trapState.saveRolled && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div className="eyebrow">
+                    {trapDisarmer && !trapState.disarmAttempted ? 'Or Skip Disarm & Roll Save:' : 'Step 2 — Roll Save to Avoid Trap:'}
+                  </div>
+                  <div className="chiprow">
+                    {party
+                      .filter((p) => p.status === 'alive')
+                      .map((p) => (
+                        <button
+                          key={p.id}
+                          className={`chip${trapState.targetPcId === p.id ? ' chip--amber' : ''}`}
+                          onClick={() => setTrapState({ ...trapState, targetPcId: p.id })}
+                        >
+                          Target: #{p.marchingOrder} {p.name} ({p.life} HP)
+                        </button>
+                      ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        const victim = party.find((p) => p.id === trapState.targetPcId) ?? party[0]!
+                        const mod =
+                          (victim.classId === 'rogue' || victim.classId === 'halfling' || victim.classId === 'acrobat'
+                            ? victim.level
+                            : Math.floor(victim.level / 2)) + (hasLight ? 0 : -2)
+                        const r = rollExploding(defaultRng, 6)
+                        const total = r.total + mod
+                        const success = r.rolls[0] !== 1 && total >= trapState.level
+                        if (!success) {
+                          partySt.setLife(victim.id, victim.life - trapState.damage)
+                        }
+                        setTrapState({
+                          ...trapState,
+                          saveRolled: true,
+                          saveTotal: total,
+                          saveSuccess: success,
+                          saveNote: success
+                            ? `${victim.name} rolled [${r.rolls.join('+')}] + ${mod} = ${total} vs L${trapState.level} — SAVED! Avoided all damage!`
+                            : `${victim.name} rolled [${r.rolls.join('+')}] + ${mod} = ${total} vs L${trapState.level} — FAILED! Took ${trapState.damage} damage.`,
+                        })
+                      }}
+                    >
+                      <IconDice size={16} /> Roll Trap Save (vs L{trapState.level})
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Post-Save Reroll Options (Halfling Luck / Paladin Prayer / Rogue Evasion) or Continue */}
+              {trapState.saveRolled && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div
+                    style={{
+                      fontSize: '0.84rem',
+                      fontWeight: 600,
+                      color: trapState.saveSuccess ? 'var(--moss-200)' : 'var(--blood-300)',
+                    }}
+                  >
+                    {trapState.saveNote}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {!trapState.saveSuccess &&
+                      party.some((p) => p.classId === 'halfling' && (p.resources.luck ?? 0) > 0) && (
+                        <button
+                          className="btn btn--moss"
+                          onClick={() => {
+                            const hlf = party.find((p) => p.classId === 'halfling' && (p.resources.luck ?? 0) > 0)!
+                            partySt.spendResource(hlf.id, 'luck', 1)
+                            const victim = party.find((p) => p.id === trapState.targetPcId) ?? party[0]!
+                            partySt.setLife(victim.id, victim.life + trapState.damage)
+                            setTrapState({ ...trapState, saveRolled: false, saveNote: `${hlf.name} spends 1 Luck — roll Trap Save again!` })
+                          }}
+                        >
+                          Spend Halfling Luck to Reroll Save
+                        </button>
+                      )}
+                    {!trapState.saveSuccess && paladinWithPrayer && (
+                      <button
+                        className="btn btn--moss"
+                        onClick={() => {
+                          partySt.spendResource(paladinWithPrayer.id, 'prayer', 1)
+                          const victim = party.find((p) => p.id === trapState.targetPcId) ?? party[0]!
+                          partySt.setLife(victim.id, victim.life + trapState.damage)
+                          setTrapState({
+                            ...trapState,
+                            saveRolled: false,
+                            saveNote: `${paladinWithPrayer.name} spends 1 Prayer point — roll Trap Save again!`,
+                          })
+                        }}
+                      >
+                        Spend Paladin Prayer to Reroll Save
+                      </button>
+                    )}
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        const hadLoot = trapState.hasTreasureAfter
+                        setTrapState(null)
+                        if (hadLoot) {
+                          setOutcome({
+                            title: 'Treasure Chest Opened!',
+                            body: resolveAndAwardTreasure(),
+                          })
+                        }
+                      }}
+                    >
+                      {trapState.hasTreasureAfter ? 'Open Treasure Chest' : 'Continue'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Persistent Active Encounter Banner if pendingEncounter is active */}
+          {d.pendingEncounter && (!outcome || outcome.action !== 'fight') && !trapState && (
+            <div className="outcome outcome--fight">
+              <div className="outcome__title">Hostile Foes Block Your Path!</div>
+              <div className="outcome__body">
+                {d.pendingEncounter.bossRollInfo ?? `A ${d.pendingEncounter.foeKind} encounter awaits in this chamber.`}
+              </div>
+              <div className="outcome__actions">
+                <button className="btn" onClick={() => goFight()}>
+                  <IconSword size={16} /> Enter Encounter
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Active Tile Outcome / Interactive Event Panel */}
-          {outcome && (
-            <div className={`outcome${outcome.action === 'fight' ? ' outcome--fight' : ''}`} style={{ marginBottom: 'var(--sp-3)' }}>
+          {outcome && !trapState && (
+            <div className={`outcome${outcome.action === 'fight' ? ' outcome--fight' : ''}`}>
               <div className="outcome__title">{outcome.title}</div>
-              <div className="outcome__body" style={{ whiteSpace: 'pre-line' }}>{outcome.body}</div>
-              <div className="outcome__actions" style={{ flexWrap: 'wrap' }}>
+              <div className="outcome__body">{outcome.body}</div>
+              <div className="outcome__actions">
                 {outcome.action === 'fight' && (
                   <button className="btn" onClick={() => goFight()}>
-                    ⚔️ Enter Encounter
+                    <IconSword size={16} /> Enter Encounter
                   </button>
                 )}
                 {outcome.action === 'search' && current && !current.searched && (
                   <button className="btn btn--moss" onClick={onSearch}>
-                    🔍 Search Tile (d6{current.corridor ? '-1' : ''})
+                    <IconSearch size={16} /> Search Tile (d6{current.corridor ? '-1' : ''})
                   </button>
                 )}
 
-                {/* Search 5-6 Discovery Choices (Book p. 107) */}
                 {outcome.action === 'found-choice' && (
                   <>
                     <button
@@ -510,11 +737,11 @@ export function DungeonScreen() {
                         partySt.addPartyGold(gp)
                         setOutcome({
                           title: 'Hidden Treasure Found!',
-                          body: `Behind a loose stone you uncover (${r1} × ${r2}) = ${gp}gp! Added to party gold.`,
+                          body: `Behind a loose flagstone you uncover (${r1} × ${r2}) = ${gp}gp! Added to party gold.`,
                         })
                       }}
                     >
-                      💰 Hidden Treasure
+                      <IconCoin size={15} /> Hidden Treasure
                     </button>
                     <button
                       className="btn"
@@ -527,7 +754,7 @@ export function DungeonScreen() {
                         })
                       }}
                     >
-                      👁️ +1 Clue
+                      <IconEye size={15} /> +1 Clue
                     </button>
                     <button
                       className="btn btn--ghost"
@@ -541,40 +768,11 @@ export function DungeonScreen() {
                         })
                       }}
                     >
-                      🕳️ Secret Passage
+                      <IconDoor size={15} /> Secret Passage
                     </button>
                   </>
                 )}
 
-                {/* Trap Disarm Choice for Front-Row Rogue/Gnome/Kukla */}
-                {outcome.action === 'trap-disarm' && trapDisarmer && (
-                  <button
-                    className="btn btn--moss"
-                    onClick={() => {
-                      const tL = outcome.trapLevel ?? hcl + 2
-                      const mod = trapOrLockMod(trapDisarmer, 'disarm', !hasLight)
-                      const r = rollExploding(defaultRng, 6)
-                      const total = r.total + mod
-                      const loot = resolveAndAwardTreasure()
-                      if (r.rolls[0] !== 1 && total >= tL) {
-                        setOutcome({
-                          title: `Trap Disarmed (${total} vs L${tL})!`,
-                          body: `${trapDisarmer.name} deftly disarms the mechanism!\n\n${loot}`,
-                        })
-                      } else {
-                        partySt.setLife(trapDisarmer.id, trapDisarmer.life - 1)
-                        setOutcome({
-                          title: `Disarm Failed (${total} vs L${tL})!`,
-                          body: `The trap springs on ${trapDisarmer.name} (-1 Life)!\n\n${loot}`,
-                        })
-                      }
-                    }}
-                  >
-                    🛠️ Disarm Trap with {trapDisarmer.name}
-                  </button>
-                )}
-
-                {/* Statue Choice (Book p. 153) */}
                 {outcome.action === 'statue-choice' && (
                   <>
                     <button
@@ -593,7 +791,7 @@ export function DungeonScreen() {
                         }
                       }}
                     >
-                      ✋ Touch the Statue (d6)
+                      <IconDice size={15} /> Touch the Statue (d6)
                     </button>
                     <button className="btn btn--ghost" onClick={() => setOutcome(null)}>
                       Leave It Alone
@@ -601,7 +799,6 @@ export function DungeonScreen() {
                   </>
                 )}
 
-                {/* Puzzle Box Choice (Book p. 153) */}
                 {outcome.action === 'puzzle-choice' && (
                   <>
                     <button
@@ -631,7 +828,7 @@ export function DungeonScreen() {
                         }
                       }}
                     >
-                      🧩 Try to Solve Box
+                      <IconDice size={15} /> Try to Solve Box
                     </button>
                     <button className="btn btn--ghost" onClick={() => setOutcome(null)}>
                       Leave It Alone
@@ -639,7 +836,6 @@ export function DungeonScreen() {
                   </>
                 )}
 
-                {/* Wandering Healer Shop (Book p. 154: 10gp per Life) */}
                 {outcome.action === 'healer-shop' && (
                   <>
                     {party.map((p) => (
@@ -663,7 +859,6 @@ export function DungeonScreen() {
                   </>
                 )}
 
-                {/* Wandering Alchemist Shop (Book p. 154: Potion 50gp, Blade Poison 30gp) */}
                 {outcome.action === 'alchemist-shop' && (
                   <>
                     <button
@@ -682,7 +877,7 @@ export function DungeonScreen() {
                         setCampMsg(`Bought Potion of Healing (50gp) for ${target.name}!`)
                       }}
                     >
-                      🧪 Buy Healing Potion (50gp)
+                      <IconPotion size={15} /> Buy Healing Potion (50gp)
                     </button>
                     <button
                       className="btn"
@@ -700,26 +895,58 @@ export function DungeonScreen() {
                         setCampMsg(`Applied Blade Poison (+1 Attack) to ${target.name}'s weapon!`)
                       }}
                     >
-                      🗡️ Buy Blade Poison (30gp)
+                      <IconSword size={15} /> Buy Blade Poison (30gp)
                     </button>
                   </>
                 )}
 
                 {outcome.action !== 'fight' && (
                   <button className="btn btn--ghost" onClick={() => setOutcome(null)}>
-                    Continue
+                    Dismiss
                   </button>
                 )}
               </div>
             </div>
           )}
 
-          {/* ROOM ACTIONS: Search, Rest, Exit at Entrance */}
-          {current && !d.pendingEncounter && (
-            <div className="chiprow" style={{ marginBottom: 'var(--sp-3)' }}>
+          {/* ROOM ACTIONS: Search, Targeted Heal/Bless/Bandage, Rest, Exit at Entrance */}
+          {current && !d.pendingEncounter && !trapState && (
+            <div className="chiprow">
               {!current.searched && (
                 <button className="chip chip--amber" onClick={onSearch}>
-                  🔍 Search {current.corridor ? 'Corridor (d6-1)' : 'Room (d6)'}
+                  <IconSearch size={13} /> Search {current.corridor ? 'Corridor (d6-1)' : 'Room (d6)'}
+                </button>
+              )}
+              {clericWithHeal && (
+                <button
+                  className="chip chip--amber"
+                  onClick={() => setHealPicker({ kind: 'cleric-heal', actorId: clericWithHeal.id })}
+                >
+                  <IconPrayer size={13} /> {clericWithHeal.name}: Heal Ally ({clericWithHeal.resources.healing})
+                </button>
+              )}
+              {clericWithBless && (
+                <button
+                  className="chip"
+                  onClick={() => setHealPicker({ kind: 'cleric-blessing', actorId: clericWithBless.id })}
+                >
+                  <IconPrayer size={13} /> {clericWithBless.name}: Blessing ({clericWithBless.resources.blessing})
+                </button>
+              )}
+              {paladinWithPrayer && (
+                <button
+                  className="chip chip--amber"
+                  onClick={() => setHealPicker({ kind: 'paladin-heal', actorId: paladinWithPrayer.id })}
+                >
+                  <IconPrayer size={13} /> {paladinWithPrayer.name}: Lay on Hands ({paladinWithPrayer.resources.prayer})
+                </button>
+              )}
+              {bandageHolder && (
+                <button
+                  className="chip"
+                  onClick={() => setHealPicker({ kind: 'bandage', actorId: bandageHolder.id })}
+                >
+                  <IconHeart size={13} /> Apply Bandage
                 </button>
               )}
               {!partySt.restedThisAdventure && (
@@ -728,7 +955,6 @@ export function DungeonScreen() {
                   onClick={() => {
                     const res = partySt.restParty()
                     setCampMsg(res.message)
-                    // 1-in-6 chance of Wandering Monsters when resting (Book p. 114)
                     if (rollDie(defaultRng, 6) === 1) {
                       setOutcome({
                         title: 'Wandering Monsters Interrupt Rest!',
@@ -738,7 +964,7 @@ export function DungeonScreen() {
                     }
                   }}
                 >
-                  ⛺ Rest Party (1/Adv)
+                  <IconCamp size={13} /> Rest Party (1/Adv)
                 </button>
               )}
               {isAtEntrance && (
@@ -749,24 +975,64 @@ export function DungeonScreen() {
                     setCampMsg(res.message)
                   }}
                 >
+                  <IconDoor size={13} />
                   {d.finalBossSlain
-                    ? '🏆 Exit Dungeon Alive (Complete Mission!)'
-                    : '🚪 Exit Dungeon (Retreat to Town)'}
+                    ? 'Exit Dungeon Alive (Claim Victory!)'
+                    : 'Exit Dungeon (Retreat to Town)'}
                 </button>
               )}
             </div>
           )}
 
+          {/* TARGET PICKER TRAY ON DUNGEON SCREEN */}
+          {healPicker && (
+            <div className="target-tray">
+              <div className="eyebrow" style={{ color: 'var(--amber-200)', marginBottom: 6 }}>
+                Choose Target Hero:
+              </div>
+              <div className="chiprow">
+                {party.map((ally) => {
+                  const cap = maxLife(getClass(ally.classId), ally.level, ally.traits)
+                  return (
+                    <button
+                      key={ally.id}
+                      className="chip chip--on"
+                      onClick={() => {
+                        let msg = ''
+                        if (healPicker.kind === 'cleric-heal') {
+                          msg = partySt.castHealingPrayer(healPicker.actorId, ally.id).message
+                        } else if (healPicker.kind === 'cleric-blessing') {
+                          msg = partySt.castBlessingPrayer(healPicker.actorId, ally.id).message
+                        } else if (healPicker.kind === 'paladin-heal') {
+                          msg = partySt.usePaladinHeal(healPicker.actorId, ally.id, 1).message
+                        } else {
+                          msg = partySt.useBandage(ally.id).message
+                        }
+                        setCampMsg(msg)
+                        setHealPicker(null)
+                      }}
+                    >
+                      #{ally.marchingOrder} {ally.name} ({ally.life}/{cap} HP)
+                    </button>
+                  )
+                })}
+                <button className="chip" onClick={() => setHealPicker(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           {campMsg && (
-            <div style={{ fontSize: '0.8rem', color: 'var(--amber-200)', marginBottom: 'var(--sp-2)' }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--amber-200)' }}>
               {campMsg}
             </div>
           )}
 
           {/* Door choice — the heart of navigation */}
-          {current && !d.pendingEncounter && (
+          {current && !d.pendingEncounter && !trapState && (
             <>
-              <div className="sect">Choose an Exit Door</div>
+              <div className="sect">Choose an Exit Door (or Tap Door on Map)</div>
               <div className="doorgroup">
                 {open.map((door) => (
                   <button
@@ -774,8 +1040,10 @@ export function DungeonScreen() {
                     className="doorbtn doorbtn--new"
                     onClick={() => onDoor(door)}
                   >
-                    <span className="doorbtn__dir">{DIR_NAME[door.dir]} Door</span>
-                    <span className="doorbtn__hint">open into the unexplored dark (roll d66 + 2d6)</span>
+                    <span className="doorbtn__dir">
+                      <IconDoor size={15} /> {DIR_NAME[door.dir]} Doorway
+                    </span>
+                    <span className="doorbtn__hint">unexplored chamber (reveal next room)</span>
                   </button>
                 ))}
                 {back.map((door) => (
@@ -784,7 +1052,9 @@ export function DungeonScreen() {
                     className="doorbtn doorbtn--back"
                     onClick={() => onDoor(door)}
                   >
-                    <span className="doorbtn__dir">{DIR_NAME[door.dir]} Door</span>
+                    <span className="doorbtn__dir">
+                      <IconDoor size={15} /> {DIR_NAME[door.dir]} Doorway
+                    </span>
                     <span className="doorbtn__hint">retrace steps (1-in-6 Wandering Monsters)</span>
                   </button>
                 ))}
