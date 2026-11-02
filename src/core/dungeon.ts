@@ -131,7 +131,7 @@ export function resolveTileContent(d2d6: number, isCorridor: boolean): TileOutco
     case 2: return { kind: 'treasure' }
     case 3: return { kind: 'treasure-trap' }
     case 4: return isCorridor ? { kind: 'empty' } : { kind: 'special-event' }
-    case 5: return { kind: 'empty' } // special feature OR secret passage (player chooses)
+    case 5: return { kind: 'special-feature' } // Empty + Special Feature OR Secret Passage (p.152)
     case 6: return { kind: 'foe', foeKind: 'vermin' }
     case 7: return { kind: 'foe', foeKind: 'minion' }
     case 8: return isCorridor ? { kind: 'empty' } : { kind: 'foe', foeKind: 'minion' }

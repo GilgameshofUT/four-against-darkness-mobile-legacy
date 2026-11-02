@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Rendered PDF page images (keep markdown transcription tracked)
+reference/pages/
