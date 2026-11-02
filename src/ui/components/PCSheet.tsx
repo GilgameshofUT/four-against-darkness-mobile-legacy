@@ -1,5 +1,6 @@
 import { derive, type PC } from '../../state/pc'
 import { useParty } from '../../state/party'
+import { spells } from '../../data/spells'
 
 export function PCSheet({ pc, onClose }: { pc: PC; onClose: () => void }) {
   const d = derive(pc)
@@ -7,6 +8,7 @@ export function PCSheet({ pc, onClose }: { pc: PC; onClose: () => void }) {
   const addGold = useParty((s) => s.addGold)
   const spend = useParty((s) => s.spendResource)
   const toggleTrait = useParty((s) => s.toggleTrait)
+  const togglePrepared = useParty((s) => s.togglePrepared)
   const levelUp = useParty((s) => s.levelUp)
   const addClue = useParty((s) => s.addClue)
   const traitMax = d.cls.id === 'halfling' ? 2 : 1
@@ -63,6 +65,31 @@ export function PCSheet({ pc, onClose }: { pc: PC; onClose: () => void }) {
             </li>
           ))}
         </ul>
+
+        {/* Spells (wizards, druids, illusionists) */}
+        {d.cls.magic?.school && d.cls.magic.school !== 'cleric' && (
+          <>
+            <h3 className="sheet__h">
+              Spells ({pc.preparedSpells.length}/{d.slots} prepared · {pc.resources.spellSlots ?? 0} slots left)
+            </h3>
+            <ul className="traitlist">
+              {spells
+                .filter((s) => s.school === d.cls.magic!.school)
+                .map((s) => {
+                  const on = pc.preparedSpells.includes(s.id)
+                  return (
+                    <li
+                      key={s.id}
+                      className={`traitrow${on ? ' is-on' : ''}`}
+                      onClick={() => togglePrepared(pc.id, s.id, d.slots)}
+                    >
+                      <b>{s.name}.</b> {s.text}
+                    </li>
+                  )
+                })}
+            </ul>
+          </>
+        )}
 
         {/* Traits */}
         <h3 className="sheet__h">Traits (pick {traitMax})</h3>

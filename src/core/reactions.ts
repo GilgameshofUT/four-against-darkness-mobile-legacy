@@ -24,7 +24,7 @@ export function parseReactions(str: string): ReactionRange[] | null {
   const segments = s.split(/,(?=\s*\d)/)
   const ranges: ReactionRange[] = []
   for (const seg of segments) {
-    const m = /^(\d+)\s*(?:[-–—]\s*(\d+))?\s*[\):]?\s*(.+)$/.exec(seg.trim())
+    const m = /^(\d+)\s*(?:[-–—]\s*(\d+))?\s*[):]?\s*(.+)$/.exec(seg.trim())
     if (!m) continue
     const min = parseInt(m[1] ?? '0', 10)
     const max = m[2] !== undefined ? parseInt(m[2], 10) : min

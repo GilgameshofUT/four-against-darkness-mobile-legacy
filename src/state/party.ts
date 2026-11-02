@@ -19,6 +19,7 @@ interface PartyState {
   /** Spend/recover a named resource pool (returns true if applied). */
   spendResource: (id: string, key: string, amount: number) => boolean
   toggleTrait: (id: string, trait: string, max: number) => void
+  togglePrepared: (id: string, spellId: string, max: number) => void
   levelUp: (id: string) => void
   reset: () => void
 }
@@ -71,6 +72,17 @@ export const useParty = create<PartyState>()(
             if (has) return { ...p, traits: p.traits.filter((t) => t !== trait) }
             if (p.traits.length >= max) return p
             return { ...p, traits: [...p.traits, trait] }
+          }),
+        })),
+
+      togglePrepared: (id, spellId, max) =>
+        set((s) => ({
+          party: s.party.map((p) => {
+            if (p.id !== id) return p
+            const has = p.preparedSpells.includes(spellId)
+            if (has) return { ...p, preparedSpells: p.preparedSpells.filter((x) => x !== spellId) }
+            if (p.preparedSpells.length >= max) return p
+            return { ...p, preparedSpells: [...p.preparedSpells, spellId] }
           }),
         })),
 

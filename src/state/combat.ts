@@ -57,7 +57,8 @@ interface CombatState {
   lastFoeTurn: string[] | null
   lootReady: boolean
   begin: (foeKind: FoeKind, env: Environment, hclValue: number) => void
-  attack: (pc: PC, foeUid: string, rng?: Rng) => AttackResult | null
+  attack: (pc: PC, foeUid: string, rng?: Rng, spell?: boolean) => AttackResult | null
+  castSpell: (pc: PC, foeUid: string, rng?: Rng) => AttackResult | null
   foeTurn: (hclValue: number, rng?: Rng) => string[]
   tryMorale: (foeUid: string, rng?: Rng) => 'flee' | 'fight' | 'never'
   markLoot: () => void
@@ -159,13 +160,15 @@ export const useCombat = create<CombatState>((set, get) => ({
         })
       },
 
-      attack: (pc, foeUid, rng = defaultRng) => {
+      attack: (pc, foeUid, rng = defaultRng, spell = false) => {
         const st = get()
         const foe = st.foes.find((f) => f.uid === foeUid)
         if (!foe) return null
         const d = derive(pc)
         const die = [6, 8, 10, 12, 20][d.tier - 1] ?? 6
-        const out = rollAttack({ dieSides: die, modifiers: d.attack, rng })
+        // Casters add +L to spellcasting; otherwise the class attack bonus.
+        const mods = spell ? pc.level : d.attack
+        const out = rollAttack({ dieSides: die, modifiers: mods, rng })
         const hits = resolveAttack(out.attackTotal, foe.level, foe.kind === 'vermin' || foe.kind === 'minion' ? 'minor' : 'major')
         const minor = foe.kind === 'vermin' || foe.kind === 'minion'
 
@@ -204,9 +207,14 @@ export const useCombat = create<CombatState>((set, get) => ({
           pcsActed: acted,
           lastAttack: result,
           lootReady: remainingFoes.length === 0,
-          log: [...st.log, `${pc.name}: ${note} (${out.attackTotal} vs L${foe.level})`],
+          log: [...st.log, `${pc.name}${spell ? ' casts' : ''}: ${note} (${out.attackTotal} vs L${foe.level})`],
         })
         return result
+      },
+
+      castSpell: (pc, foeUid, rng = defaultRng) => {
+        if (!useParty.getState().spendResource(pc.id, 'spellSlots', 1)) return null
+        return get().attack(pc, foeUid, rng, true)
       },
 
       foeTurn: (hclValue, rng = defaultRng) => {

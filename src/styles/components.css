@@ -380,6 +380,18 @@
 .rollbtn.is-done { opacity: 0.5; }
 .rollbtn:disabled { opacity: 0.35; }
 .rollbtn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--amber-600); }
+.rollcol { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+.castbtn {
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  color: #12160a;
+  background: linear-gradient(var(--moss-300), var(--moss-500));
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  box-shadow: 0 2px 0 var(--moss-700);
+}
+.castbtn:active { transform: translateY(2px); }
 
 .encard {
   border: 1px solid var(--line);
@@ -460,3 +472,19 @@
 .tablecard__note { color: var(--muted); font-style: italic; font-size: var(--text-xs); }
 .listcards { display: flex; flex-direction: column; gap: var(--sp-2); }
 .listcards .abilitylist li { list-style: none; }
+
+/* ---- XP grid ---- */
+.xpgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-2); margin-top: var(--sp-3); }
+.xpbtn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: linear-gradient(var(--stone-600), var(--ink-700));
+  text-align: left;
+}
+.xpbtn b { font-family: var(--font-display); color: var(--parch-100); font-size: var(--text-sm); }
+.xpbtn span { font-size: var(--text-2xs); color: var(--muted); }
+.xpbtn:active { border-color: var(--amber-400); }

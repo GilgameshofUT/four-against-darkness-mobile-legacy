@@ -81,13 +81,24 @@ export function CombatScreen() {
               <div className="pcrow__name">{pc.name} <i>· {d.cls.name}</i></div>
               <div className="lifebar"><i style={{ width: `${(pc.life / d.maxLife) * 100}%` }} /></div>
             </div>
-            <button
-              className={`rollbtn${acted ? ' is-done' : ''}`}
-              disabled={!foe}
-              onClick={() => foe && combat.attack(pc, foe.uid)}
-            >
-              {d.attackRoll}
-            </button>
+            <div className="rollcol">
+              <button
+                className={`rollbtn${acted ? ' is-done' : ''}`}
+                disabled={!foe}
+                onClick={() => foe && combat.attack(pc, foe.uid)}
+              >
+                {d.attackRoll}
+              </button>
+              {(pc.resources.spellSlots ?? 0) > 0 && pc.preparedSpells.length > 0 && foe && (
+                <button
+                  className="castbtn"
+                  onClick={() => combat.castSpell(pc, foe.uid)}
+                  title="Cast a prepared spell"
+                >
+                  Cast
+                </button>
+              )}
+            </div>
           </div>
         )
       })}
