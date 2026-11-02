@@ -88,6 +88,8 @@ export function DungeonScreen() {
     setTab('combat')
   }
 
+  const [confirmClear, setConfirmClear] = useState(false)
+
   return (
     <ScreenShell
       eyebrow={`Random Dungeon · HCL ${hcl}`}
@@ -134,6 +136,22 @@ export function DungeonScreen() {
               <span>
                 {current.shape.isCorridor ? 'Corridor' : 'Room'} · {current.searched ? 'searched' : 'unsearched'} · {current.environment}
               </span>
+              <button
+                className={`tileinfo__clear${confirmClear ? ' is-armed' : ''}`}
+                onClick={() => {
+                  if (confirmClear) {
+                    d.reset()
+                    setOutcome(null)
+                    setConfirmClear(false)
+                  } else {
+                    setConfirmClear(true)
+                    setTimeout(() => setConfirmClear(false), 4000)
+                  }
+                }}
+                title="Clear the dungeon and start over"
+              >
+                {confirmClear ? 'Sure?' : 'Clear'}
+              </button>
             </div>
           )}
 

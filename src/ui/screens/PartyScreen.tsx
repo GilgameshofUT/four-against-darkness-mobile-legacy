@@ -9,6 +9,7 @@ export function PartyScreen() {
   const party = useParty((s) => s.party)
   const [picking, setPicking] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
+  const [confirmReset, setConfirmReset] = useState(false)
   const open = party.find((p) => p.id === openId)
   const hcl = party.length ? Math.max(...party.map((p) => p.level)) : 0
 
@@ -40,10 +41,16 @@ export function PartyScreen() {
         <button
           className="btn btn--ghost"
           onClick={() => {
-            if (confirm('Clear the whole party?')) useParty.getState().reset()
+            if (confirmReset) {
+              useParty.getState().reset()
+              setConfirmReset(false)
+            } else {
+              setConfirmReset(true)
+              setTimeout(() => setConfirmReset(false), 4000)
+            }
           }}
         >
-          Reset party
+          {confirmReset ? 'Tap again to confirm' : 'Reset party'}
         </button>
       )}
 

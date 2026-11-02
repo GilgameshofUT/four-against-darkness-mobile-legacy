@@ -337,6 +337,18 @@
   font-size: var(--text-sm);
   color: var(--parch-300);
 }
+.tileinfo__clear {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  padding: 6px 10px;
+  min-height: 36px;
+}
+.tileinfo__clear:active { color: var(--blood-300); border-color: var(--blood-700); }
+.tileinfo__clear.is-armed { color: var(--blood-300); border-color: var(--blood-500); }
 
 /* ---- Outcome card ---- */
 .outcome {

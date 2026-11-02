@@ -10,7 +10,7 @@ export type Environment = 'dungeon' | 'caverns' | 'fungal'
 export interface Tile {
   id: string
   shape: TileShape
-  /** Grid origin (in cells) of this tile's bounding box. */
+  /** Grid origin (in cells) of this tile's shape cells. */
   x: number
   y: number
   environment: Environment
@@ -18,11 +18,14 @@ export interface Tile {
   searched: boolean
   /** Openings on this tile (doors). */
   openings: Dir[]
+  /** Connector-corridor cells in grid coords, joining this tile to the previous one. */
+  extraCells?: Array<[number, number]>
+  /** Door markers in grid coords (exit/entry of the connector). */
+  doors?: Array<[number, number]>
 }
 
-/** Max cells across before wrapping the map to a new row. */
+/** Max grid columns before stacking the next tile below instead of right. */
 const MAX_COLS = 26
-const ROW_GAP = 3
 
 interface DungeonState {
   tiles: Tile[]
@@ -46,17 +49,39 @@ interface DungeonState {
 let n = 0
 const newId = () => `tile-${Date.now()}-${n++}`
 
-/** Bounding box width/height of a shape's cells. */
-function bounds(shape: TileShape): { w: number; h: number } {
-  let maxX = -Infinity, maxY = -Infinity, minX = Infinity, minY = Infinity
+/** Min/max extents of a shape's cells (shapes may use negative coords). */
+function shapeExtents(shape: TileShape): { minX: number; maxX: number; minY: number; maxY: number } {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
   for (const [cx, cy] of shape.cells) {
-    if (cx > maxX) maxX = cx
-    if (cy > maxY) maxY = cy
     if (cx < minX) minX = cx
+    if (cx > maxX) maxX = cx
     if (cy < minY) minY = cy
+    if (cy > maxY) maxY = cy
   }
-  if (!Number.isFinite(maxX)) return { w: 1, h: 1 }
-  return { w: maxX - minX + 1, h: maxY - minY + 1 }
+  if (!Number.isFinite(minX)) return { minX: 0, maxX: 0, minY: 0, maxY: 0 }
+  return { minX, maxX, minY, maxY }
+}
+
+type Cell = [number, number]
+const cellKey = (x: number, y: number) => `${x},${y}`
+
+/** Median cell of a list along a projection (picks a middle exit/entry cell). */
+function medianBy(cells: Array<[number, number]>, by: (c: [number, number]) => number): Cell {
+  const sorted = [...cells].sort((a, b) => by(a) - by(b))
+  const m = sorted[Math.floor(sorted.length / 2)]
+  return m ? [m[0], m[1]] : [0, 0]
+}
+
+/** L-shaped corridor from E to N, excluding both endpoints. */
+function corridorCells(E: Cell, N: Cell): Cell[] {
+  const [ex, ey] = E
+  const [nx, ny] = N
+  const cells: Cell[] = []
+  const stepX = nx > ex ? 1 : -1
+  for (let x = ex + stepX; x !== nx; x += stepX) cells.push([x, ey])
+  const stepY = ny > ey ? 1 : -1
+  for (let y = ey + stepY; y !== ny; y += stepY) cells.push([nx, y])
+  return cells
 }
 
 export const useDungeon = create<DungeonState>()(
@@ -91,16 +116,51 @@ export const useDungeon = create<DungeonState>()(
         if (!current) return null
 
         const shape = rollTileShape()
-        const b = bounds(shape)
-        const cb = bounds(current.shape)
+        const ce = shapeExtents(current.shape)
+        const ne = shapeExtents(shape)
 
-        // Snake placement: to the right of the current tile, wrapping to a new row.
-        let x = current.x + cb.w + 1 //1-cell corridor gap
+        // Grid cells already drawn (all tiles incl. their connectors).
+        const occupied = new Set<string>()
+        for (const t of tiles) {
+          for (const [cx, cy] of t.shape.cells) occupied.add(cellKey(t.x + cx, t.y + cy))
+          for (const [gx, gy] of t.extraCells ?? []) occupied.add(cellKey(gx, gy))
+        }
+        const overlaps = (sx: number, sy: number) => {
+          for (const [cx, cy] of shape.cells) {
+            if (occupied.has(cellKey(sx + cx, sy + cy))) return true
+          }
+          return false
+        }
+
+        // Same-row placement: right of the current tile with a1-cell gap.
+        let x = current.x + ce.maxX + 2 - ne.minX
         let y = current.y
-        if (x + b.w > MAX_COLS) {
-          x = 0
-          // find lowest row used so far
-          y = Math.max(...tiles.map((t) => t.y + bounds(t.shape).h)) + ROW_GAP
+        let below = false
+        if (x + ne.maxX > MAX_COLS || overlaps(x, y)) {
+          // Stack below the current tile instead: rows only grow downward,
+          // so everything previously placed is above and cannot overlap.
+          below = true
+          x = Math.max(current.x, -ne.minX)
+          y = current.y + ce.maxY + 2 - ne.minY
+        }
+
+        // Exit on the current tile: rightmost column (same row) or bottom row (below).
+        const exitLocal = below
+          ? medianBy(current.shape.cells.filter(([, cy]) => cy === ce.maxY), ([cx]) => cx)
+          : medianBy(current.shape.cells.filter(([cx]) => cx === ce.maxX), ([, cy]) => cy)
+        const E: Cell = [current.x + exitLocal[0], current.y + exitLocal[1]]
+
+        // Entry on the new tile: leftmost column (same row) or top row (below).
+        const entryLocal = below
+          ? medianBy(shape.cells.filter(([, cy]) => cy === ne.minY), ([cx]) => cx)
+          : medianBy(shape.cells.filter(([cx]) => cx === ne.minX), ([, cy]) => cy)
+        const N: Cell = [x + entryLocal[0], y + entryLocal[1]]
+
+        // Carve the connector; skip cells already drawn by older tiles
+        // (the path stays walkable through them).
+        const extraCells: Cell[] = []
+        for (const [gx, gy] of corridorCells(E, N)) {
+          if (!occupied.has(cellKey(gx, gy))) extraCells.push([gx, gy])
         }
 
         const content = rollTileContent(undefined, shape.isCorridor)
@@ -113,6 +173,8 @@ export const useDungeon = create<DungeonState>()(
           content,
           searched: false,
           openings: shape.openings,
+          extraCells,
+          doors: [N],
         }
 
         const pending =
@@ -120,7 +182,13 @@ export const useDungeon = create<DungeonState>()(
             ? { foeKind: content.foeKind, tileId: tile.id }
             : null
 
-        set({ tiles: [...tiles, tile], currentId: tile.id, pendingEncounter: pending })
+        set({
+          tiles: tiles
+            .map((t) => (t.id === current.id ? { ...t, doors: [...(t.doors ?? []), E] } : t))
+            .concat(tile),
+          currentId: tile.id,
+          pendingEncounter: pending,
+        })
         return content
       },
 

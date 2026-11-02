@@ -18,6 +18,8 @@ export function MoreScreen() {
   const party = useParty((s) => s.party)
   const [xpSystem, setXpSystem] = useState<string>('classical')
   const [xpLog, setXpLog] = useState<string[]>([])
+  const [notice, setNotice] = useState<string | null>(null)
+  const [confirmErase, setConfirmErase] = useState(false)
   const [openScenario, setOpenScenario] = useState<string | null>(null)
   const scenario = scenarios.find((s) => s.id === openScenario)
 
@@ -57,7 +59,7 @@ export function MoreScreen() {
         if (data.dungeon) localStorage.setItem('4ad-dungeon', data.dungeon)
         location.reload()
       } catch {
-        alert('That is not a valid4AD save file.')
+        setNotice('That file is not a valid 4AD save.')
       }
     }
     reader.readAsText(file)
@@ -108,6 +110,12 @@ export function MoreScreen() {
 
       {/* Save / load */}
       <div className="sect">Save</div>
+      {notice && (
+        <div className="outcome">
+          <div className="outcome__body">{notice}</div>
+          <div className="outcome__actions"><button className="btn btn--ghost" onClick={() => setNotice(null)}>Dismiss</button></div>
+        </div>
+      )}
       <div className="outcome__actions">
         <button className="btn" onClick={exportData}>Export save</button>
         <label className="btn btn--ghost" style={{ cursor: 'pointer' }}>
@@ -123,13 +131,17 @@ export function MoreScreen() {
       <button
         className="btn btn--ghost"
         onClick={() => {
-          if (confirm('Erase party, dungeon and saves on this device?')) {
+          if (confirmErase) {
             useParty.getState().reset()
             useDungeon.getState().reset()
+            setConfirmErase(false)
+          } else {
+            setConfirmErase(true)
+            setTimeout(() => setConfirmErase(false), 4000)
           }
         }}
       >
-        Erase all data
+        {confirmErase ? 'Tap again to erase everything' : 'Erase all data'}
       </button>
 
       <div className="divider" />

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { ScreenShell } from '../components/ScreenShell'
 import { useCombat } from '../../state/combat'
 import { useDungeon } from '../../state/dungeon'
@@ -19,6 +19,7 @@ export function CombatScreen() {
   const dungeon = useDungeon()
   const party = useParty((s) => s.party)
   const hcl = partyHcl(party)
+  const [loot, setLoot] = useState<string | null>(null)
 
   // Begin an encounter when the dungeon has a pending one.
   useEffect(() => {
@@ -128,14 +129,13 @@ export function CombatScreen() {
             Check morale
           </button>
         )}
-        {allDead && (
+        {allDead && !loot && (
           <button
             className="btn btn--moss"
             onClick={() => {
-              const loot = rollTreasure()
+              setLoot(rollTreasure())
               combat.clear()
               useDungeon.getState().noteMajorFoe()
-              alert(`Loot: ${loot}\n\n1 XP roll earned.`)
             }}
           >
             Take loot & XP
@@ -145,6 +145,15 @@ export function CombatScreen() {
           <button className="btn btn--ghost" onClick={() => combat.clear()}>Flee</button>
         )}
       </div>
+
+      {/* Loot result */}
+      {loot && (
+        <div className="outcome">
+          <div className="outcome__title">Victory — loot & XP</div>
+          <div className="outcome__body">{loot}{'\n\n'}1 XP roll earned (see More → Experience).</div>
+          <div className="outcome__actions"><button className="btn btn--ghost" onClick={() => setLoot(null)}>Dismiss</button></div>
+        </div>
+      )}
 
       {/* Foe turn result */}
       {combat.lastFoeTurn && combat.lastFoeTurn.length > 0 && (

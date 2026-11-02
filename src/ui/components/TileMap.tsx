@@ -4,15 +4,13 @@ import type { Dir } from '../../core/dungeon'
 
 const CELL = 16
 
+/** Connector cells look like torchlit passage: slightly warmer fill. */
+const CONNECTOR_FILL = '#3d3a1e'
+
 const ENV_FILL: Record<Environment, string> = {
   dungeon: '#2f3a1e',
   caverns: '#3a2c1c',
   fungal: '#24401f',
-}
-const ENV_STROKE: Record<Environment, string> = {
-  dungeon: '#6f8140',
-  caverns: '#9c7c4e',
-  fungal: '#7d9147',
 }
 
 /** Pixel centre of a given opening side on a tile's bounding box. */
@@ -38,18 +36,19 @@ export function TileMap({ height = 240 }: { height?: number }) {
     if (!ctx) return
 
     // Flatten cells with tile offsets; find global bounds.
-    const placed: Array<{ gx: number; gy: number; env: Environment; tileId: string }> = []
+    // Connector cells ride along with their tile.
+    const placed: Array<{ gx: number; gy: number; env: Environment; connector: boolean }> = []
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    const track = (gx: number, gy: number, env: Environment, connector: boolean) => {
+      placed.push({ gx, gy, env, connector })
+      if (gx < minX) minX = gx
+      if (gy < minY) minY = gy
+      if (gx > maxX) maxX = gx
+      if (gy > maxY) maxY = gy
+    }
     for (const t of tiles) {
-      for (const [cx, cy] of t.shape.cells) {
-        const gx = t.x + cx
-        const gy = t.y + cy
-        placed.push({ gx, gy, env: t.environment, tileId: t.id })
-        if (gx < minX) minX = gx
-        if (gy < minY) minY = gy
-        if (gx > maxX) maxX = gx
-        if (gy > maxY) maxY = gy
-      }
+      for (const [cx, cy] of t.shape.cells) track(t.x + cx, t.y + cy, t.environment, false)
+      for (const [gx, gy] of t.extraCells ?? []) track(gx, gy, t.environment, true)
     }
     if (!Number.isFinite(minX)) {
       ctx.clearRect(0, 0, cv.width, cv.height)
@@ -78,25 +77,32 @@ export function TileMap({ height = 240 }: { height?: number }) {
 
     // cells
     for (const p of placed) {
-      ctx.fillStyle = ENV_FILL[p.env]
+      ctx.fillStyle = p.connector ? CONNECTOR_FILL : ENV_FILL[p.env]
       ctx.fillRect(px(p.gx) + 1, py(p.gy) + 1, scale - 2, scale - 2)
       ctx.strokeStyle = '#0c0a07'
       ctx.strokeRect(px(p.gx) + 1, py(p.gy) + 1, scale - 2, scale - 2)
     }
 
-    // openings (doors) + current highlight per tile
+    // doors: stored connector endpoints when present, else the shape's openings
     for (const t of tiles) {
       let w = 0, h = 0
       for (const [cx, cy] of t.shape.cells) {
         if (cx + 1 > w) w = cx + 1
         if (cy + 1 > h) h = cy + 1
       }
-      // openings at bounding-box edges
-      for (const d of t.openings) {
-        const [ox, oy] = openingXY(t.x, t.y, w, h, d)
+      const pts: Array<[number, number]> = []
+      if (t.doors && t.doors.length > 0) {
+        for (const [gx, gy] of t.doors) pts.push([px(gx) + scale / 2, py(gy) + scale / 2])
+      } else {
+        for (const d of t.openings) {
+          const [ox, oy] = openingXY(t.x, t.y, w, h, d)
+          pts.push([px(ox), py(oy)])
+        }
+      }
+      for (const [dx, dy] of pts) {
         ctx.fillStyle = t.id === currentId ? '#f4d18a' : '#e8b45c'
         ctx.beginPath()
-        ctx.arc(px(ox), py(oy), Math.max(2, scale * 0.28), 0, Math.PI * 2)
+        ctx.arc(dx, dy, Math.max(2, scale * 0.28), 0, Math.PI * 2)
         ctx.fill()
       }
       if (t.id === currentId) {
@@ -105,7 +111,6 @@ export function TileMap({ height = 240 }: { height?: number }) {
         ctx.strokeRect(px(t.x) - 1, py(t.y) - 1, w * scale + 2, h * scale + 2)
         ctx.lineWidth = 1
       }
-      void ENV_STROKE
     }
   }, [tiles, currentId, height])
 
@@ -117,8 +122,11 @@ export function TileMap({ height = 240 }: { height?: number }) {
     const my = ((e.clientY - rect.top) / rect.height) * cv.height
     // find clicked tile by hit-testing its cells (recompute layout)
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const t of tiles) for (const [cx, cy] of t.shape.cells) {
-      const gx = t.x + cx, gy = t.y + cy
+    const cellsOf = (t: (typeof tiles)[number]): Array<[number, number]> => [
+      ...t.shape.cells.map(([cx, cy]): [number, number] => [t.x + cx, t.y + cy]),
+      ...(t.extraCells ?? []),
+    ]
+    for (const t of tiles) for (const [gx, gy] of cellsOf(t)) {
       if (gx < minX) minX = gx; if (gy < minY) minY = gy
       if (gx > maxX) maxX = gx; if (gy > maxY) maxY = gy
     }
@@ -128,8 +136,7 @@ export function TileMap({ height = 240 }: { height?: number }) {
     const offX = (cv.width - cols * scale) / 2
     const offY = (height - rows * scale) / 2
     for (const t of tiles) {
-      for (const [cx, cy] of t.shape.cells) {
-        const gx = t.x + cx, gy = t.y + cy
+      for (const [gx, gy] of cellsOf(t)) {
         const x = offX + (gx - minX) * scale
         const y = offY + (gy - minY) * scale
         if (mx >= x && mx < x + scale && my >= y && my < y + scale) {
