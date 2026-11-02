@@ -145,7 +145,6 @@ export function DungeonScreen() {
                     setConfirmClear(false)
                   } else {
                     setConfirmClear(true)
-                    setTimeout(() => setConfirmClear(false), 4000)
                   }
                 }}
                 title="Clear the dungeon and start over"

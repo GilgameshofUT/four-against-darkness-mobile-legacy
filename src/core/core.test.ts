@@ -212,6 +212,26 @@ describe('dungeon', () => {
     expect(ALL_SHAPES).toHaveLength(42)
   })
 
+  it('every shape is internally 4-connected (no detached parts)', () => {
+    for (const s of ALL_SHAPES) {
+      const all = new Set(s.cells.map(([x, y]) => `${x},${y}`))
+      const first = [...all][0]!
+      const visited = new Set<string>([first])
+      const queue = [first]
+      while (queue.length > 0) {
+        const [x, y] = queue.pop()!.split(',').map(Number) as [number, number]
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const n = `${x + dx},${y + dy}`
+          if (all.has(n) && !visited.has(n)) {
+            visited.add(n)
+            queue.push(n)
+          }
+        }
+      }
+      expect(visited.size, `shape ${s.key}`).toBe(all.size)
+    }
+  })
+
   it('starting rooms are keys1-6 and non-corridor', () => {
     for (let i = 0; i < 100; i++) {
       const s = rollFirstRoom(mulberry32(i))

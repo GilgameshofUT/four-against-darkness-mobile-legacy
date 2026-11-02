@@ -137,7 +137,6 @@ export function MoreScreen() {
             setConfirmErase(false)
           } else {
             setConfirmErase(true)
-            setTimeout(() => setConfirmErase(false), 4000)
           }
         }}
       >

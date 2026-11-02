@@ -72,15 +72,30 @@ function medianBy(cells: Array<[number, number]>, by: (c: [number, number]) => n
   return m ? [m[0], m[1]] : [0, 0]
 }
 
-/** L-shaped corridor from E to N, excluding both endpoints. */
+/**
+ * L-shaped corridor from E to N, excluding both endpoints.
+ * The horizontal run always reaches column N.x (so the corner turn
+ * is 4-connected), then the vertical run climbs to N.
+ */
 function corridorCells(E: Cell, N: Cell): Cell[] {
   const [ex, ey] = E
   const [nx, ny] = N
   const cells: Cell[] = []
-  const stepX = nx > ex ? 1 : -1
-  for (let x = ex + stepX; x !== nx; x += stepX) cells.push([x, ey])
-  const stepY = ny > ey ? 1 : -1
-  for (let y = ey + stepY; y !== ny; y += stepY) cells.push([nx, y])
+  if (nx !== ex) {
+    const stepX = nx > ex ? 1 : -1
+    if (ey === ny) {
+      for (let x = ex + stepX; x !== nx; x += stepX) cells.push([x, ey])
+    } else {
+      for (let x = ex + stepX; ; x += stepX) {
+        cells.push([x, ey])
+        if (x === nx) break
+      }
+    }
+  }
+  if (ny !== ey) {
+    const stepY = ny > ey ? 1 : -1
+    for (let y = ey + stepY; y !== ny; y += stepY) cells.push([nx, y])
+  }
   return cells
 }
 
@@ -138,11 +153,20 @@ export const useDungeon = create<DungeonState>()(
         let below = false
         if (x + ne.maxX > MAX_COLS || overlaps(x, y)) {
           // Stack below the current tile instead: rows only grow downward,
-          // so everything previously placed is above and cannot overlap.
+          // so shifting further down always finds clear space.
           below = true
           x = Math.max(current.x, -ne.minX)
           y = current.y + ce.maxY + 2 - ne.minY
         }
+        // Universal safety: nudge down until no shape cell overlaps.
+        // (Same-row siblings can extend lower than the current tile,
+        // so the below-placement guess is not automatically clear.)
+        let guard = 0
+        while (overlaps(x, y) && guard < 500) {
+          y += 1
+          guard += 1
+        }
+        if (guard >= 500) throw new Error('Could not place tile: map is full')
 
         // Exit on the current tile: rightmost column (same row) or bottom row (below).
         const exitLocal = below

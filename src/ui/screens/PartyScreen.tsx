@@ -46,7 +46,6 @@ export function PartyScreen() {
               setConfirmReset(false)
             } else {
               setConfirmReset(true)
-              setTimeout(() => setConfirmReset(false), 4000)
             }
           }}
         >

@@ -25,13 +25,19 @@ const rect = (x: number, y: number, w: number, h: number): Array<[number, number
 }
 const hCorridor = (len: number): Array<[number, number]> => rect(0, 0, len, 1)
 
-/** Build a shape from cell groups. */
-const shape = (key: number, isCorridor: boolean, openings: Dir[], ...groups: Array<Array<[number, number]>>): TileShape => ({
-  key,
-  isCorridor,
-  cells: groups.flat(),
-  openings,
-})
+/** Build a shape from cell groups (deduped: groups may overlap, e.g. crosses). */
+const shape = (key: number, isCorridor: boolean, openings: Dir[], ...groups: Array<Array<[number, number]>>): TileShape => {
+  const seen = new Set<string>()
+  const cells: Array<[number, number]> = []
+  for (const [cx, cy] of groups.flat()) {
+    const k = `${cx},${cy}`
+    if (!seen.has(k)) {
+      seen.add(k)
+      cells.push([cx, cy])
+    }
+  }
+  return { key, isCorridor, cells, openings }
+}
 
 /* ---- Starting rooms (roll d6) ---- */
 const STARTING: TileShape[] = [
@@ -39,7 +45,9 @@ const STARTING: TileShape[] = [
   shape(2, false, ['N', 'S', 'E'], rect(0, 0, 4, 4), rect(4, 1, 1, 2)),
   shape(3, false, ['N', 'W', 'E'], rect(0, 0, 4, 3), rect(1, 3, 2, 2)),
   shape(4, false, ['N', 'S', 'E', 'W'], rect(0, 0, 4, 4), rect(4, 0, 2, 2)),
-  shape(5, false, ['N', 'S'], rect(0, 0, 4, 4), rect(4, 4, 2, 3)),
+  shape(5, false, ['N', 'S'],
+    [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [1, 1], [2, 1], [3, 1],
+     [1, 2], [2, 2], [1, 3], [2, 3], [0, 4], [1, 4], [2, 4], [3, 4], [1, 5], [2, 5]]),
   shape(6, false, ['N', 'W', 'E'], rect(0, 0, 6, 3), rect(2, 3, 2, 2)),
 ]
 
@@ -86,7 +94,7 @@ const D66: TileShape[] = [
   shape(63, true, ['W', 'E'], hCorridor(5)),
   shape(64, false, ['W', 'E'], rect(0, 0, 3, 4), rect(3, 2, 4, 1)),
   shape(65, true, ['W', 'E', 'N'], rect(0, 0, 3, 1), rect(2, -2, 1, 2)),
-  shape(66, false, ['W', 'E', 'S'], rect(0, 0, 4, 3), rect(4, 3, 2, 2)),
+  shape(66, false, ['W', 'S'], rect(0, 0, 3, 4), rect(-2, 1, 2, 1)),
 ]
 
 export const ALL_SHAPES: TileShape[] = [...STARTING, ...D66]
